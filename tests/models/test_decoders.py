@@ -53,6 +53,7 @@ micro_model_mapping = {
         MICRO_MODELS_HOME, "granite-3.2-8b-layers-3-step-100000"
     ),
     # FIXME: Because this uses the same config as 3.2, re-using here, but should update
+
     GRANITE_3p3_8B_INSTRUCT: os.path.join(
         MICRO_MODELS_HOME, "granite-3.2-8b-layers-3-step-100000"
     ),
