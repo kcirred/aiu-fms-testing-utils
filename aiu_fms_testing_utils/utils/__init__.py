@@ -15,6 +15,7 @@ import torch.nn as nn
 import math
 import contextlib
 
+
 @contextlib.contextmanager
 def stagger_region(limit: int):
     """
@@ -25,18 +26,21 @@ def stagger_region(limit: int):
     :param limit: Number of concurrent processes allowed in the code region if > 0.
     """
     if limit > 0 and limit != world_size:
-        for _set in range( math.ceil(world_size / float(limit)) ):
-            if rank < (_set+1)*limit:
+        for _set in range(math.ceil(world_size / float(limit))):
+            if rank < (_set + 1) * limit:
                 break
             torch.distributed.barrier()
-        dprint(f"Stagger: Enter (Set: {_set+1} of {math.ceil(world_size / float(limit))})")
-    yield {}
+        dprint(
+            f"Stagger: Enter (Set: {_set + 1} of {math.ceil(world_size / float(limit))})"
+        )
+    yield
     if limit > 0 and limit != world_size:
-        for _set in range( math.ceil(world_size / float(limit)) ):
-            if rank >= (_set+1)*limit:
+        for _set in range(math.ceil(world_size / float(limit))):
+            if rank >= (_set + 1) * limit:
                 continue
             torch.distributed.barrier()
-        dprint(f"Stagger: All Complete")
+        dprint("Stagger: All Complete")
+
 
 def warmup_model(
     model: nn.Module,
@@ -78,16 +82,17 @@ def warmup_model(
 
     extra_kwargs = {**_extra_kwargs, "only_last_token": "paged" not in attn_name}
 
-    with stagger_region(stagger_update_lazyhandle) as _s, torch_sendnn.warmup_mode():
-        generate(
-            model,
-            _warmup_input_ids,
-            max_new_tokens=_max_new_tokens,
-            do_sample=False,
-            use_cache=use_cache,
-            extra_kwargs=extra_kwargs,
-            **attention_specific_kwargs,
-        )
+    with stagger_region(stagger_update_lazyhandle):
+        with torch_sendnn.warmup_mode():
+            generate(
+                model,
+                _warmup_input_ids,
+                max_new_tokens=_max_new_tokens,
+                do_sample=False,
+                use_cache=use_cache,
+                extra_kwargs=extra_kwargs,
+                **attention_specific_kwargs,
+            )
     pt_compile_model_time = time.time() - pt_compile_model_time
     dprint(f"PT compile complete, took {pt_compile_model_time:.3f}s")
 

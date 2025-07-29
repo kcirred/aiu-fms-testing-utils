@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import random
 import time
-import contextlib
 
 # Third Party
 from aiu_fms_testing_utils.utils import aiu_setup, warmup_model, stagger_region
@@ -241,19 +240,19 @@ parser.add_argument(
     "--stagger_load",
     type=int,
     default=0,
-    help="Limit the number of concurrent processes executing the model loading phase. Set to 0 to allow all processes"
+    help="Limit the number of concurrent processes executing the model loading phase. Set to 0 to allow all processes",
 )
 parser.add_argument(
     "--stagger_update_lazyhandle",
     type=int,
     default=0,
-    help="Limit the number of concurrent processes executing the AIU update_lazyhandle phase. Set to 0 to allow all processes"
+    help="Limit the number of concurrent processes executing the AIU update_lazyhandle phase. Set to 0 to allow all processes",
 )
 parser.add_argument(
     "--dist_timeout",
     type=int,
     default=0,
-    help="Timeout to use for messaging in minutes. Default set by PyTorch dist.init_process_group"
+    help="Timeout to use for messaging in minutes. Default set by PyTorch dist.init_process_group",
 )
 args = parser.parse_args()
 
@@ -502,7 +501,7 @@ dprint(f"{fused_weights=}")
 dprint(f"data_type={default_dtype}")
 dprint("=" * 60 + "\n")
 
-with stagger_region(args.stagger_load) as _s:
+with stagger_region(args.stagger_load):
     model = get_model(
         args.architecture,
         args.variant,
@@ -846,7 +845,8 @@ if args.compile:
                 ids,
                 args.max_new_tokens,
                 args.compile_dynamic_sendnn,
-                args.stagger_update_lazyhandle,
+                use_cache=cache,
+                stagger_update_lazyhandle=args.stagger_update_lazyhandle,
                 **extra_generation_kwargs,
             )
         if (
