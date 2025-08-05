@@ -70,7 +70,7 @@ This metrics will be set at the [fail thresholds](./models/test_decoders.py#L182
 
 ## 1. Run on GPU
 
-First, configure the environment variables:path:
+First, configure the environment variables:
 
 ```bash
 export MODEL_PATH=/model-path/
