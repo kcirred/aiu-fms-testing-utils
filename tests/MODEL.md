@@ -2,10 +2,10 @@
 
 This guide explains how to run the pytest test suites in [aiu-fms-testing-utils](https://github.com/aiu-fms-testing-utils/tree/main/tests/models) to validate models and debug issues.
 
-1. [Generate metrics in GPU](MODEL.md#1-run-first-on-gpu)
+1. [Generate metrics in GPU](MODEL.md#1-run-on-gpu)
 2. [Get thresholds](MODEL.md#2-get-thresholds)
-3. [Apply thresholds to `test_decoders.py`](MODEL.md#3-apply-thresholds-in-aiu-test_decoders)
-4. [Run `test_model_expectations.py`](MODEL.md#4-run-test_model_expectations)
+3. [Apply thresholds to `test_decoders.py`](MODEL.md#3-apply-thresholds-to-test_decoderspy)
+4. [Run `test_model_expectations.py`](MODEL.md#4-run-test_model_expectationspy)
 
 ![diagram](./resources/assets/test_flow_diagram.png)
 
@@ -281,7 +281,6 @@ assert 0.7638888888888888 < 0.01
 ```
 
 ## 4. Run `test_model_expectations.py`
-
 
 ### Test Case for Single Output
 
