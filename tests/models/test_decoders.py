@@ -1,5 +1,5 @@
 from fms.models.hf.utils import AutoConfig
-from fms.utils import serialization, tokenizers
+from fms.utils import serialization
 import pytest
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
@@ -20,9 +20,10 @@ from aiu_fms_testing_utils.testing.validation import (
 from aiu_fms_testing_utils.utils import (
     warmup_model,
     sample_sharegpt_requests,
-    ids_for_prompt,
 )
 import json
+from transformers import AutoTokenizer
+
 from aiu_fms_testing_utils.utils.aiu_setup import dprint, aiu_dist_setup
 
 import os
@@ -307,7 +308,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     )
     prompt_list = []
     for prompt, _ in prompts_and_sizes:
-        prompt_list.append(ids_for_prompt(prompt, tokenizer))
+        prompt_list.append(tokenizer.encode(prompt, return_tensors="pt").squeeze(0))
 
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
     return input_ids, extra_kwargs
@@ -477,7 +478,7 @@ def test_common_shapes(
             **distributed_kwargs,
         }
 
-    tokenizer = tokenizers.get_tokenizer(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     # prepare the AIU model
     model = persistent_model.get_or_create(
