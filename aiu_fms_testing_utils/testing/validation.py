@@ -208,7 +208,7 @@ def load_validation_information(
                     "tokens": tokenizer.encode(
                         validation_file_path.read_text(encoding="utf-8"),
                         return_tensors="pt",
-                    ),
+                    ).squeeze(0),
                     "logits": None,
                 }
             )
