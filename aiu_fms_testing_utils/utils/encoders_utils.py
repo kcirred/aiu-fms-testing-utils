@@ -11,7 +11,7 @@ from datasets import Dataset, load_dataset
 from fms.models.hf import to_hf_api
 from fms.models.hf.modeling_hf_adapter import HFModelArchitecture
 from fms.utils import has_package
-from fms.utils.tokenizers import BaseTokenizer
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from torch import nn
 from torch.utils.data import DataLoader
 import evaluate
@@ -61,7 +61,7 @@ class EncoderQAInfer:
     def __init__(
         self,
         model: nn.Module,
-        tokenizer: BaseTokenizer,
+        tokenizer: PreTrainedTokenizerBase,
         args: argparse.Namespace,
     ) -> None:
         self.model = model
@@ -712,7 +712,7 @@ class EncoderMLMInfer:
     def __init__(
         self,
         model: HFModelArchitecture,
-        tokenizer: BaseTokenizer,
+        tokenizer: PreTrainedTokenizerBase,
         args: argparse.Namespace,
     ) -> None:
         self.model = model
@@ -752,7 +752,7 @@ class EncoderMLMInfer:
 
 def run_encoder_eval_qa(
     model: nn.Module,  # FMS-style model
-    tokenizer: BaseTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     args: argparse.Namespace,
 ) -> None:
     """Entry point to run QuestionAnswering Evaluation of encoder model.
@@ -771,7 +771,7 @@ def run_encoder_eval_qa(
 
 def run_encoder_eval_mlm(
     model: HFModelArchitecture,  # model wrapped by to_hf_api
-    tokenizer: BaseTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     args: argparse.Namespace,
 ) -> None:
     """Entry point to run evaluation of encoder models."""
