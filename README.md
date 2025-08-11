@@ -128,7 +128,7 @@ Run with AIU instead of, default, senulator.
 
 ```shell
 export FLEX_COMPUTE=SENTIENT
-export FLEX_DEVICE=VFIO
+export FLEX_DEVICE=PF
 ```
 
 Optional envars to supress debugging output:
