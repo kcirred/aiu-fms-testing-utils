@@ -65,7 +65,7 @@ class EncoderQAInfer:
         args: argparse.Namespace,
     ) -> None:
         self.model = model
-        self.tokenizer = tokenizer.tokenizer  # extract original HF tokenizer
+        self.tokenizer = tokenizer
         self.args = args
 
         self.question_column_name = ""
