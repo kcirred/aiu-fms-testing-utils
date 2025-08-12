@@ -92,7 +92,6 @@ with open(args.program_criteria_json_path, 'r') as f:
     
     programs = [p.program_id for p in program_criteria_list] if len(args.programs) == 0 else args.programs
 
-random.seed(42)
 torch.manual_seed(42)
 torch.set_grad_enabled(False)
 os.environ["COMPILATION_MODE"] = "offline_decoder"
@@ -113,7 +112,7 @@ program_map = get_programs_prompts(
     program_cycles=max_new_tokens
 )
 for v in program_map.values():
-    random.shuffle(v)
+    random.Random(42).shuffle(v)
 
 # select prompts that fit the batch size criteria
 valid_prompts = []
@@ -240,12 +239,14 @@ validation_model = get_model(
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
 
 for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for each program
-    dprint(f"*** testing program {program_id} ***")
+    if local_rank == 0:
+        dprint(f"*** testing program {program_id} ***")
     
     for valid_prompt in valid_program_prompt_list: # for each test of that program (different batch/prompt)
         input_ids, extra_kwargs = __prepare_inputs(valid_prompt[0], valid_prompt[1], tokenizer)
         extra_kwargs["attn_name"] = "spyre_paged_attn"
-        dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
+        if local_rank == 0:
+            dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
 
         # warmup aiu model
         if not warmed_up:
