@@ -65,7 +65,7 @@ class EncoderQAInfer:
         args: argparse.Namespace,
     ) -> None:
         self.model = model
-        self.tokenizer = tokenizer.tokenizer  # extract original HF tokenizer
+        self.tokenizer = tokenizer
         self.args = args
 
         self.question_column_name = ""
@@ -256,7 +256,7 @@ class EncoderQAInfer:
             # of the samples passed.
             pad_to_multiple_of = None
             self.data_collator = DataCollatorWithPadding(
-                self.tokenizer.tokenizer,
+                self.tokenizer,
                 pad_to_multiple_of=pad_to_multiple_of,
             )
 
@@ -740,7 +740,7 @@ class EncoderMLMInfer:
         unmasker = pipeline(
             "fill-mask",
             model=self.model,
-            tokenizer=self.tokenizer.tokenizer,
+            tokenizer=self.tokenizer,
         )
         output = unmasker(self.prompt)
         dprint(f"Run completed in {time.time() - warmup_start_time:.1f} s\n---")
