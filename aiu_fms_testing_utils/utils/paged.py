@@ -486,7 +486,7 @@ class ProgramCriteria:
 def get_programs_prompts(program_criteria_list, multiple, max_batch_size, max_tkv, program_cycles):
     program_map = {}
 
-    for batch_size in range(max_batch_size):
+    for batch_size in range(1, max_batch_size+1):
         for prompt_len in range(multiple, max_tkv-program_cycles, multiple):
             possible_program_switches = ((program_cycles-1) // multiple) + 1
             resolved_programs = [None] * possible_program_switches

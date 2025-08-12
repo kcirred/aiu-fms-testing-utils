@@ -4,6 +4,7 @@ import os
 import random
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
+from aiu_fms_testing_utils.utils.aiu_setup import aiu_dist_setup, local_rank, dprint
 from aiu_fms_testing_utils.testing.validation import (
     extract_validation_information,
     LogitsExtractorHook,
@@ -96,7 +97,8 @@ torch.manual_seed(42)
 torch.set_grad_enabled(False)
 os.environ["COMPILATION_MODE"] = "offline_decoder"
 if "VLLM_DT_MAX_CONTEXT_LEN" not in os.environ or "VLLM_DT_MAX_BATCH_SIZE" not in os.environ:
-    print("Please specify VLLM_DT_MAX_CONTEXT_LEN and VLLM_DT_MAX_BATCH_SIZE environment variables")
+    if local_rank == 0:
+        dprint("Please specify VLLM_DT_MAX_CONTEXT_LEN and VLLM_DT_MAX_BATCH_SIZE environment variables")
     exit()
 
 max_batch_size = int(os.environ["VLLM_DT_MAX_BATCH_SIZE"])
@@ -135,7 +137,7 @@ for program in programs:
     
     # in case we need to pick up a random one if we have not found all of the batch sizes
     if len(not_found_batch_sizes) > 0:
-        print(f"need to select {len(not_found_batch_sizes)} prompts that do not satisfy given batch sizes: {not_found_batch_sizes} for program: {program}")
+        dprint(f"need to select {len(not_found_batch_sizes)} prompts that do not satisfy given batch sizes: {not_found_batch_sizes} for program: {program}")
         valid_program_prompts.extend(unpicked_prompt_shapes[:len(not_found_batch_sizes)])
     # if the user didn't specify batch sizes, just pick one
     elif len(batch_sizes) == 0:
@@ -174,6 +176,31 @@ def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
     )
     return (cross_entropy, diff)
 
+# def __print_result(result):
+#     if local_rank != 0:
+#         return
+    
+#     result = generation.trim_prefix(result)
+
+#     result = generation.trim_prefix(result, tokenizer.bos_token_id)
+
+#     # stop at EOS token if present and remove padding
+#     if not args.no_early_termination:
+#         result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
+
+#     output_str = tokenizer.decode(result)
+
+#     if args.output_path != "":
+#         output_path = Path(args.output_path)
+#         output_path.mkdir(parents=True, exist_ok=True)
+#         if output_path.is_dir():
+#             file_path = output_path / f"{result_idx}.txt"
+#             with file_path.open("w", encoding="utf-8") as file:
+#                 file.write(output_str + "\n")
+#     dprint(output_str)
+#     print()
+
+
 model_path_kwargs = {}
 if os.path.exists(model_variant):
     model_path_kwargs = {"model_path": model_variant}
@@ -182,6 +209,8 @@ else:
 
 distributed_kwargs = {}
 if USE_DISTRIBUTED:
+    dist.init_process_group()
+    aiu_dist_setup(dist.get_rank(), dist.get_world_size())
     distributed_kwargs["distributed_strategy"] = "tp"
     distributed_kwargs["group"] = dist.group.WORLD
 
@@ -211,12 +240,12 @@ validation_model = get_model(
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
 
 for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for each program
-    print(f"*** testing program {program_id} ***")
+    dprint(f"*** testing program {program_id} ***")
     
     for valid_prompt in valid_program_prompt_list: # for each test of that program (different batch/prompt)
         input_ids, extra_kwargs = __prepare_inputs(valid_prompt[0], valid_prompt[1], tokenizer)
         extra_kwargs["attn_name"] = "spyre_paged_attn"
-        print(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
+        dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
 
         # warmup aiu model
         if not warmed_up:
@@ -256,8 +285,9 @@ for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for
         )
 
         for sentence_idx, token_idx, metrics_value in level_1_metrics:
-            print(
-                f"For Program {program_id} in sentence {sentence_idx + 1}, the metric for token {token_idx} is {metrics_value}"
-            )
+            if local_rank == 0:
+                dprint(
+                    f"For Program {program_id} in sentence {sentence_idx + 1}, the metric for token {token_idx} is {metrics_value}"
+                )
 
 
