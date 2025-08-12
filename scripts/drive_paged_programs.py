@@ -245,9 +245,6 @@ for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for
     for valid_prompt in valid_program_prompt_list: # for each test of that program (different batch/prompt)
         input_ids, extra_kwargs = __prepare_inputs(valid_prompt[0], valid_prompt[1], tokenizer)
         extra_kwargs["attn_name"] = "spyre_paged_attn"
-        if local_rank == 0:
-            dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
-
         # warmup aiu model
         if not warmed_up:
             warmup_model(
@@ -258,6 +255,10 @@ for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for
                 **extra_kwargs
             )
             warmed_up = True
+        
+        if local_rank == 0:
+            dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
+
 
         cpu_validation_info = extract_validation_information(
             validation_model,
