@@ -684,13 +684,13 @@ def test_common_shapes(
         dprint(f"mean diff failure rate: {diff_failure_rate}")
         dprint(f"cross entropy loss failure rate: {ce_failure_rate}")
         if "mean_diff" not in skip_assertions:
-            assert (
-                diff_failure_rate < failure_rate_threshold
-            ), f"failure rate for mean diff was too high: {diff_failure_rate}"
+            assert diff_failure_rate < failure_rate_threshold, (
+                f"failure rate for mean diff was too high: {diff_failure_rate}"
+            )
         if "ce" not in skip_assertions:
-            assert (
-                ce_failure_rate < failure_rate_threshold
-            ), f"failure rate for cross entropy loss was too high: {ce_failure_rate}"
+            assert ce_failure_rate < failure_rate_threshold, (
+                f"failure rate for cross entropy loss was too high: {ce_failure_rate}"
+            )
 
         print("passed validation level 1")
     else:
