@@ -524,11 +524,12 @@ def test_common_shapes(
         )
 
         if save_validation_info_outputs:
-            cpu_validation_info.save(
-                __get_validation_info_full_path(
-                    model_path, batch_size, seq_length, max_new_tokens, 0
+            if not USE_DISTRIBUTED or dist.get_rank() == 0:
+                cpu_validation_info.save(
+                    __get_validation_info_full_path(
+                        model_path, batch_size, seq_length, max_new_tokens, 0
+                    )
                 )
-            )
     cpu_static_tokens = cpu_validation_info.get_info("tokens")
     eos_indexes = __find_eos_index(
         cpu_static_tokens, tokenizer.eos_token_id, seq_length, max_new_tokens
@@ -604,11 +605,12 @@ def test_common_shapes(
                         f"cpu validation info extracted for validation level 1 - iter={i}"
                     )
                     if save_validation_info_outputs:
-                        cpu_validation_info.save(
-                            __get_validation_info_full_path(
-                                model_path, batch_size, seq_length, max_new_tokens, i
+                        if not USE_DISTRIBUTED or dist.get_rank() == 0:
+                            cpu_validation_info.save(
+                                __get_validation_info_full_path(
+                                    model_path, batch_size, seq_length, max_new_tokens, i
+                                )
                             )
-                        )
                 cpu_static_tokens = cpu_validation_info.get_info("tokens")
                 eos_indexes = __find_eos_index(
                     cpu_static_tokens,
@@ -629,11 +631,12 @@ def test_common_shapes(
             )
             dprint(f"aiu validation info extracted for validation level 1 - iter={i}")
             if save_validation_info_outputs:
-                aiu_validation_info.save(
-                    __get_validation_info_full_path(
-                        model_path, batch_size, seq_length, max_new_tokens, i, "aiu"
+                if not USE_DISTRIBUTED or dist.get_rank() == 0:
+                    aiu_validation_info.save(
+                        __get_validation_info_full_path(
+                            model_path, batch_size, seq_length, max_new_tokens, i, "aiu"
+                        )
                     )
-                )
 
             # capture all level 1 metrics
             level_1_metrics = capture_level_1_metrics(
