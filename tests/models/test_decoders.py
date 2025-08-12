@@ -118,7 +118,9 @@ common_max_new_tokens = os.environ.get("FMS_TEST_SHAPES_COMMON_MAX_NEW_TOKENS", 
 if USE_DISTRIBUTED:
     dist.init_process_group()
     aiu_dist_setup(dist.get_rank(), dist.get_world_size())
-    save_validation_info_outputs = save_validation_info_outputs and (dist.get_rank() == 0)
+    save_validation_info_outputs = save_validation_info_outputs and (
+        dist.get_rank() == 0
+    )
 
 if USE_MICRO_MODELS:
     validation_info_dir = os.path.join(validation_info_dir, "tiny_models")
@@ -682,13 +684,13 @@ def test_common_shapes(
         dprint(f"mean diff failure rate: {diff_failure_rate}")
         dprint(f"cross entropy loss failure rate: {ce_failure_rate}")
         if "mean_diff" not in skip_assertions:
-            assert diff_failure_rate < failure_rate_threshold, (
-                f"failure rate for mean diff was too high: {diff_failure_rate}"
-            )
+            assert (
+                diff_failure_rate < failure_rate_threshold
+            ), f"failure rate for mean diff was too high: {diff_failure_rate}"
         if "ce" not in skip_assertions:
-            assert ce_failure_rate < failure_rate_threshold, (
-                f"failure rate for cross entropy loss was too high: {ce_failure_rate}"
-            )
+            assert (
+                ce_failure_rate < failure_rate_threshold
+            ), f"failure rate for cross entropy loss was too high: {ce_failure_rate}"
 
         print("passed validation level 1")
     else:
