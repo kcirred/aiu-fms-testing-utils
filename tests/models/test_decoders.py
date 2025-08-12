@@ -118,6 +118,9 @@ common_max_new_tokens = os.environ.get("FMS_TEST_SHAPES_COMMON_MAX_NEW_TOKENS", 
 if USE_DISTRIBUTED:
     dist.init_process_group()
     aiu_dist_setup(dist.get_rank(), dist.get_world_size())
+    save_validation_info_outputs = save_validation_info_outputs and (
+        dist.get_rank() == 0
+    )
 
 if USE_MICRO_MODELS:
     validation_info_dir = os.path.join(validation_info_dir, "tiny_models")
