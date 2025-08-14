@@ -10,6 +10,7 @@ from aiu_fms_testing_utils.testing.validation import (
     LogitsExtractorHook,
     GoldenTokenHook,
     capture_level_1_metrics,
+    print_failed_cases,
     top_k_loss_calculator,
 )
 from torch import distributed as dist
@@ -72,6 +73,19 @@ parser.add_argument(
     type=str,
     help="path to share gpt file",
 )
+parser.add_argument(
+    "--test_type",
+    type=str,
+    choices=["tokens", "metrics"],
+    default="metrics",
+    help="set the type of the test that you would like to run. If metrics, will inject tokens and get metrics. If tokens, will not inject tokens and get tokens",
+)
+
+# FIXME: add a more precise way to choose program with min batch and min prompt (<program>:<min_batch,min_prompt>)
+# FIXME: add a threshold specified by the user to pass/fail
+# FIXME: enable fp8 paged
+# FIXME: add the error rate
+# FIXME: return the actual string (metrics-YES, tokens-YES) - DONE
 
 args = parser.parse_args()
 
@@ -175,30 +189,6 @@ def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
     )
     return (cross_entropy, diff)
 
-# def __print_result(result):
-#     if local_rank != 0:
-#         return
-    
-#     result = generation.trim_prefix(result)
-
-#     result = generation.trim_prefix(result, tokenizer.bos_token_id)
-
-#     # stop at EOS token if present and remove padding
-#     if not args.no_early_termination:
-#         result = generation.truncate_after_eos(result, tokenizer.eos_token_id)
-
-#     output_str = tokenizer.decode(result)
-
-#     if args.output_path != "":
-#         output_path = Path(args.output_path)
-#         output_path.mkdir(parents=True, exist_ok=True)
-#         if output_path.is_dir():
-#             file_path = output_path / f"{result_idx}.txt"
-#             with file_path.open("w", encoding="utf-8") as file:
-#                 file.write(output_str + "\n")
-#     dprint(output_str)
-#     print()
-
 
 model_path_kwargs = {}
 if os.path.exists(model_variant):
@@ -237,10 +227,7 @@ validation_model = get_model(
 )
 
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
-
 for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for each program
-    if local_rank == 0:
-        dprint(f"*** testing program {program_id} ***")
     
     for valid_prompt in valid_program_prompt_list: # for each test of that program (different batch/prompt)
         input_ids, extra_kwargs = __prepare_inputs(valid_prompt[0], valid_prompt[1], tokenizer)
@@ -257,6 +244,7 @@ for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for
             warmed_up = True
         
         if local_rank == 0:
+            dprint(f"*** testing program {program_id} ***")
             dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
 
 
@@ -269,27 +257,60 @@ for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for
             **extra_kwargs,
         )
 
-        aiu_validation_info = extract_validation_information(
-            model,
-            input_ids,
-            max_new_tokens,
-            GoldenTokenHook(cpu_validation_info.get_info("tokens")),
-            only_last_token=False,
-            timing=TIMING,
-            **extra_kwargs,
-        )
+        if args.test_type == "metrics":
 
-        # capture all level 1 metrics
-        level_1_metrics = capture_level_1_metrics(
-            cpu_validation_info.get_info("logits"),
-            aiu_validation_info.get_info("logits"),
-            top_k_loss_calculator(20, __metric_calculator),
-        )
+            aiu_validation_info = extract_validation_information(
+                model,
+                input_ids,
+                max_new_tokens,
+                GoldenTokenHook(cpu_validation_info.get_info("tokens")),
+                only_last_token=False,
+                timing=TIMING,
+                **extra_kwargs,
+            )
 
-        for sentence_idx, token_idx, metrics_value in level_1_metrics:
+            # capture all level 1 metrics
+            level_1_metrics = capture_level_1_metrics(
+                cpu_validation_info.get_info("logits"),
+                aiu_validation_info.get_info("logits"),
+                top_k_loss_calculator(20, __metric_calculator),
+            )
+            
+            cpu_tokens = cpu_validation_info.get_info("tokens")
+
+            for sentence_idx, token_idx, metrics_value in level_1_metrics:
+                if local_rank == 0:
+                    aiu_token = torch.argmax(aiu_validation_info.get_info("logits")[sentence_idx][token_idx], dim=-1)
+                    cpu_token = cpu_tokens[sentence_idx][valid_prompt[1]+token_idx]
+                    aiu_str = tokenizer.decode(aiu_token).replace("\n", "<NEWLINE>") # remove newlines for readability
+                    cpu_str = tokenizer.decode(cpu_token).replace("\n", "<NEWLINE>") # remove newlines for readability
+                    dprint(
+                        f"For Program {program_id} in sentence {sentence_idx + 1}: the metric for token {token_idx} is {metrics_value}, AIU ID=\"{aiu_token.item()}\" | STR=\"{aiu_str}\" -- CPU ID=\"{cpu_token.item()}\" | CPU STR=\"{cpu_str}\""
+                    )
+        elif args.test_type == "tokens":
+
+            aiu_validation_info = extract_validation_information(
+                model,
+                input_ids,
+                max_new_tokens,
+                None,
+                only_last_token=False,
+                timing=TIMING,
+                **extra_kwargs,
+            )
+
             if local_rank == 0:
-                dprint(
-                    f"For Program {program_id} in sentence {sentence_idx + 1}, the metric for token {token_idx} is {metrics_value}"
-                )
+                for sentence_idx, (reference_sentence, test_sentence) in enumerate(
+                    zip(cpu_validation_info.get_info("tokens"), aiu_validation_info.get_info("tokens"))
+                ):
+                    cpu_tokens = [t.item() for t in reference_sentence[-max_new_tokens:]]
+                    aiu_tokens = [t.item() for t in test_sentence[-max_new_tokens:]]
+                    dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
+                    dprint(f"CPU tokens:\n{cpu_tokens}")
+                    dprint(f"AIU tokens:\n{aiu_tokens}")
+                    dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens)}")
+                    dprint(f"AIU output:\n{tokenizer.decode(aiu_tokens)}")
+        else:
+            raise ValueError("test type must be one of metrics or tokens")
 
 
