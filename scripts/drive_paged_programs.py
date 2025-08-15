@@ -10,6 +10,7 @@ from aiu_fms_testing_utils.testing.validation import (
     LogitsExtractorHook,
     GoldenTokenHook,
     capture_level_1_metrics,
+    filter_failed_level_1_cases,
     print_failed_cases,
     top_k_loss_calculator,
 )
@@ -25,10 +26,15 @@ parser = argparse.ArgumentParser(
 parser.add_argument(
     "--programs",
     metavar='N',
-    type=int,
+    type=str,
     nargs='*',
     default=[],
-    help="select what programs to drive. If not specified, will drive all combinations of programs. Note: This will only account for the first decode program -- check max_new_tokens for details",
+    help="""
+    The list of programs to run. This would take a list where each element would be one of program_id OR <program_id>:<min_batch>,<min_prompt_length>. 
+    If program_id is specified any prompt that would result in this program would be selected.
+    If <program_id>:<min_batch>,<min_prompt_length> is specified, then with the given program_id, select a prompt that satisfies min_batch and min_prompt_length (if none exists, a message will be printed to warn the user)
+    If this list is empty, each program will be run once with any prompt that would result in this program being selected.
+    """
 )
 parser.add_argument(
     "--max_new_tokens",
@@ -36,15 +42,15 @@ parser.add_argument(
     default=8,
     help="set this if you want to change the number of tokens generated per sequence (1 prefill + max_new_tokens-1 decodes). Note: If this value is larger than 64, this may result in switching decode programs mid generation"
 )
+
 parser.add_argument(
-    '--batch_sizes',
+    "--enforce_prompts",
     metavar='N',
-    type=int,
+    type=str,
     nargs='*',
     default=[],
-    help='list of integers which denotes which batch sizes to potentially run per program. Note: if the batch size does not exist for a given program, it will be skipped and a warning will be given that another batch size was chosen'
+    help='if specified will ensure that we test prompts that satisfy the combination of <program_id>:<min_batch_size>,<min_prompt_length>. If the <min_batch_size>, <min_prompt_length> doesnt exist for a given case, it will be skipped'
 )
-
 parser.add_argument(
     "--distributed",
     action="store_true",
@@ -81,9 +87,25 @@ parser.add_argument(
     help="set the type of the test that you would like to run. If metrics, will inject tokens and get metrics. If tokens, will not inject tokens and get tokens",
 )
 
+parser.add_argument(
+    "--cross_entropy_threshold",
+    type=float,
+    default=2.5,
+    help="threshold to denote passing/failing a given iteration"
+)
+
+parser.add_argument(
+    "--failure_rate_threshold",
+    type=float,
+    default=.1,
+    help="the threshold which denotes whether to pass or fail the test. The failure threshold is defined as the number of failing iterations (cross_entropy) over the total iterations. If this value exceeds the failure_rate_threshold, we will fail the test"
+)
+
+
 # FIXME: add a more precise way to choose program with min batch and min prompt (<program>:<min_batch,min_prompt>)
-# FIXME: add a threshold specified by the user to pass/fail
 # FIXME: enable fp8 paged
+
+# FIXME: add a threshold specified by the user to pass/fail
 # FIXME: add the error rate
 # FIXME: return the actual string (metrics-YES, tokens-YES) - DONE
 
@@ -91,7 +113,6 @@ args = parser.parse_args()
 
 # interleave the decodes for programs (not 3 separate generates)
 max_new_tokens = args.max_new_tokens
-batch_sizes = args.batch_sizes
 model_variant = args.model_variant
 SHARE_GPT_DATASET_PATH = args.share_gpt_path
 USE_DISTRIBUTED = args.distributed
@@ -104,7 +125,18 @@ with open(args.program_criteria_json_path, 'r') as f:
     for i, d in enumerate(program_criteria_json_list):
         program_criteria_list.append(ProgramCriteria(i, d["max_batch"], d["max_tkv"], d["batch_granularity"], d["tkv_granularity"]))
     
-    programs = [p.program_id for p in program_criteria_list] if len(args.programs) == 0 else args.programs
+    programs = []
+    for program_str in args.programs:
+        enforce_prompt_split = program_str.split(":")
+        if len(enforce_prompt_split) == 1:
+            programs.append((int(enforce_prompt_split), 0, 0)) # this will always satisfy
+        else:
+            program_id = int(enforce_prompt_split[0])
+            enforce_batch_size, enforce_prompt_length = (int(_) for _ in enforce_prompt_split[1].split(","))
+            programs.append((program_id, enforce_batch_size, enforce_prompt_length))
+
+    if len(programs) == 0:
+        programs = [(p.program_id, 0, 0) for p in program_criteria_list]
 
 torch.manual_seed(42)
 torch.set_grad_enabled(False)
@@ -130,34 +162,19 @@ for v in program_map.values():
 
 # select prompts that fit the batch size criteria
 valid_prompts = []
-for program in programs:
-    valid_prompt_shapes = program_map[(program_criteria_list[program], )]
-    unpicked_prompt_shapes = []
-    valid_program_prompts = []
-    not_found_batch_sizes = set(batch_sizes)
-    for valid_prompt_shape in valid_prompt_shapes:
-        
-        # check if we have found all of our batch sizes
-        if len(not_found_batch_sizes) == 0:
+for program_id, min_batch_size, min_prompt_length  in programs:
+    found_valid_prompt = False
+    for valid_prompt_shape in program_map[(program_criteria_list[program_id], )]:
+
+        # make sure the criteria for min batch and min prompt is satisfied
+        if valid_prompt_shape[0] >= min_batch_size and valid_prompt_shape[1] >= min_prompt_length:
+            valid_prompts.append((program_id, valid_prompt_shape))
+            found_valid_prompt = True
             break
-
-        # if the batch size exists, append it and remove from not found set
-        if valid_prompt_shape[0] in not_found_batch_sizes:
-            valid_program_prompts.append(valid_prompt_shape)
-            not_found_batch_sizes.remove(valid_prompt_shape[0])
-        else:
-            unpicked_prompt_shapes.append(valid_prompt_shape)
     
-    # in case we need to pick up a random one if we have not found all of the batch sizes
-    if len(not_found_batch_sizes) > 0:
-        dprint(f"need to select {len(not_found_batch_sizes)} prompts that do not satisfy given batch sizes: {not_found_batch_sizes} for program: {program}")
-        valid_program_prompts.extend(unpicked_prompt_shapes[:len(not_found_batch_sizes)])
-    # if the user didn't specify batch sizes, just pick one
-    elif len(batch_sizes) == 0:
-        valid_program_prompts.append(valid_prompt_shapes[0])
-
-    valid_prompts.append(valid_program_prompts)
-
+    if not found_valid_prompt:
+        if local_rank == 0:
+            dprint(f"no valid prompt shape was found which would result in program {program_id} that satisfied min_batch={min_batch_size} and min_prompt_length={min_prompt_length}")
 
 def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     prompts_and_sizes = sample_sharegpt_requests(
@@ -227,90 +244,103 @@ validation_model = get_model(
 )
 
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
-for program_id, valid_program_prompt_list in zip(programs, valid_prompts): # for each program
+failed_cases = []
+for program_id, valid_prompt in valid_prompts: # for each program
+    input_ids, extra_kwargs = __prepare_inputs(valid_prompt[0], valid_prompt[1], tokenizer)
+    extra_kwargs["attn_name"] = "spyre_paged_attn"
+    # warmup aiu model
+    if not warmed_up:
+        warmup_model(
+            model, 
+            input_ids,
+            max_new_tokens=max_new_tokens, 
+            compile_dynamic_sendnn=True, 
+            **extra_kwargs
+        )
+        warmed_up = True
     
-    for valid_prompt in valid_program_prompt_list: # for each test of that program (different batch/prompt)
-        input_ids, extra_kwargs = __prepare_inputs(valid_prompt[0], valid_prompt[1], tokenizer)
-        extra_kwargs["attn_name"] = "spyre_paged_attn"
-        # warmup aiu model
-        if not warmed_up:
-            warmup_model(
-                model, 
-                input_ids,
-                max_new_tokens=max_new_tokens, 
-                compile_dynamic_sendnn=True, 
-                **extra_kwargs
-            )
-            warmed_up = True
-        
-        if local_rank == 0:
-            dprint(f"*** testing program {program_id} ***")
-            dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
+    if local_rank == 0:
+        dprint(f"*** testing program {program_id} ***")
+        dprint(f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}")
 
 
-        cpu_validation_info = extract_validation_information(
-            validation_model,
+    cpu_validation_info = extract_validation_information(
+        validation_model,
+        input_ids,
+        max_new_tokens,
+        LogitsExtractorHook(),
+        attn_algorithm="math",
+        **extra_kwargs,
+    )
+
+    if args.test_type == "metrics":
+
+        aiu_validation_info = extract_validation_information(
+            model,
             input_ids,
             max_new_tokens,
-            LogitsExtractorHook(),
-            attn_algorithm="math",
+            GoldenTokenHook(cpu_validation_info.get_info("tokens")),
+            only_last_token=False,
+            timing=TIMING,
             **extra_kwargs,
         )
 
-        if args.test_type == "metrics":
+        # capture all level 1 metrics
+        level_1_metrics = capture_level_1_metrics(
+            cpu_validation_info.get_info("logits"),
+            aiu_validation_info.get_info("logits"),
+            top_k_loss_calculator(20, __metric_calculator),
+        )
+        
+        cpu_tokens = cpu_validation_info.get_info("tokens")
 
-            aiu_validation_info = extract_validation_information(
-                model,
-                input_ids,
-                max_new_tokens,
-                GoldenTokenHook(cpu_validation_info.get_info("tokens")),
-                only_last_token=False,
-                timing=TIMING,
-                **extra_kwargs,
-            )
-
-            # capture all level 1 metrics
-            level_1_metrics = capture_level_1_metrics(
-                cpu_validation_info.get_info("logits"),
-                aiu_validation_info.get_info("logits"),
-                top_k_loss_calculator(20, __metric_calculator),
-            )
-            
-            cpu_tokens = cpu_validation_info.get_info("tokens")
-
-            for sentence_idx, token_idx, metrics_value in level_1_metrics:
-                if local_rank == 0:
-                    aiu_token = torch.argmax(aiu_validation_info.get_info("logits")[sentence_idx][token_idx], dim=-1)
-                    cpu_token = cpu_tokens[sentence_idx][valid_prompt[1]+token_idx]
-                    aiu_str = tokenizer.decode(aiu_token).replace("\n", "<NEWLINE>") # remove newlines for readability
-                    cpu_str = tokenizer.decode(cpu_token).replace("\n", "<NEWLINE>") # remove newlines for readability
-                    dprint(
-                        f"For Program {program_id} in sentence {sentence_idx + 1}: the metric for token {token_idx} is {metrics_value}, AIU ID=\"{aiu_token.item()}\" | STR=\"{aiu_str}\" -- CPU ID=\"{cpu_token.item()}\" | CPU STR=\"{cpu_str}\""
-                    )
-        elif args.test_type == "tokens":
-
-            aiu_validation_info = extract_validation_information(
-                model,
-                input_ids,
-                max_new_tokens,
-                None,
-                only_last_token=False,
-                timing=TIMING,
-                **extra_kwargs,
-            )
-
+        for sentence_idx, token_idx, metrics_value in level_1_metrics:
             if local_rank == 0:
-                for sentence_idx, (reference_sentence, test_sentence) in enumerate(
-                    zip(cpu_validation_info.get_info("tokens"), aiu_validation_info.get_info("tokens"))
-                ):
-                    cpu_tokens = [t.item() for t in reference_sentence[-max_new_tokens:]]
-                    aiu_tokens = [t.item() for t in test_sentence[-max_new_tokens:]]
-                    dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
-                    dprint(f"CPU tokens:\n{cpu_tokens}")
-                    dprint(f"AIU tokens:\n{aiu_tokens}")
-                    dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens)}")
-                    dprint(f"AIU output:\n{tokenizer.decode(aiu_tokens)}")
-        else:
-            raise ValueError("test type must be one of metrics or tokens")
+                aiu_token = torch.argmax(aiu_validation_info.get_info("logits")[sentence_idx][token_idx], dim=-1)
+                cpu_token = cpu_tokens[sentence_idx][valid_prompt[1]+token_idx]
+                aiu_str = tokenizer.decode(aiu_token).replace("\n", "<NEWLINE>") # remove newlines for readability
+                cpu_str = tokenizer.decode(cpu_token).replace("\n", "<NEWLINE>") # remove newlines for readability
+                dprint(
+                    f"For Program {program_id} in sentence {sentence_idx + 1}: the metric for token {token_idx} is {metrics_value}, AIU ID=\"{aiu_token.item()}\" | STR=\"{aiu_str}\" -- CPU ID=\"{cpu_token.item()}\" | CPU STR=\"{cpu_str}\""
+                )
+        
+        ce_fail_responses = filter_failed_level_1_cases(
+            level_1_metrics, lambda m: m[0] >= args.cross_entropy_threshold
+        )
+        failure_rate = len(ce_fail_responses) / len(level_1_metrics)
+        if failure_rate >= args.failure_rate_threshold:
+            failed_cases.append((program_id, valid_prompt, failure_rate))
 
+    elif args.test_type == "tokens":
 
+        aiu_validation_info = extract_validation_information(
+            model,
+            input_ids,
+            max_new_tokens,
+            None,
+            only_last_token=False,
+            timing=TIMING,
+            **extra_kwargs,
+        )
+
+        if local_rank == 0:
+            for sentence_idx, (reference_sentence, test_sentence) in enumerate(
+                zip(cpu_validation_info.get_info("tokens"), aiu_validation_info.get_info("tokens"))
+            ):
+                cpu_tokens = [t.item() for t in reference_sentence[-max_new_tokens:]]
+                aiu_tokens = [t.item() for t in test_sentence[-max_new_tokens:]]
+                dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
+                dprint(f"CPU tokens:\n{cpu_tokens}")
+                dprint(f"AIU tokens:\n{aiu_tokens}")
+                dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens)}")
+                dprint(f"AIU output:\n{tokenizer.decode(aiu_tokens)}")
+    else:
+        raise ValueError("test type must be one of metrics or tokens")
+
+if local_rank == 0:
+    if len(failed_cases) != 0:
+        dprint("the test failed with the following cases:")
+        for failed_case in failed_cases:
+            dprint(f"Program ID: {failed_case[0]}, Prompt Shape: {failed_case[1]}, Failure Rate: {failed_case[2]}")
+    else:
+        dprint("all tests passed")
