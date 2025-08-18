@@ -37,7 +37,6 @@ This configuration runs the decoder test on `granite-3.3-8b-instruct` with batch
 To run the test across multiple AIUs, use `torchrun`:
 
 ```bash
-# Run tests on 4 AIUs
 torchrun --nproc-per-node=4 -m pytest tests/models/test_decoders.py
 ```
 
