@@ -64,7 +64,7 @@ This metrics will be set at the [fail thresholds](./models/test_decoders.py#L182
 ### Further Reading
 
 - [CrossEntropyLoss Documentation](https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html)
-- [Probabilistic Langauge Models](https://courses.grainger.illinois.edu/ece598pv/fa2017/Lecture13_LM_YirenWang.pdf)
+- [Probabilistic Language Models](https://courses.grainger.illinois.edu/ece598pv/fa2017/Lecture13_LM_YirenWang.pdf)
 - [Model-diff](https://arxiv.org/abs/2412.12177#:~:text=%5B2412.12177%5D%20Model%2Ddiff:,%3E%20cs%20%3E%20arXiv:2412.12177)
 - [Estimating the Probabilities of Rare Outputs in Language Models](https://arxiv.org/html/2410.13211v1).
 
@@ -336,7 +336,7 @@ total          name                                    num avg            min
 
 ```
 
-In the example  above, the model tested was a decoder model with a single output, so the `TestAIUDecoderModels` is the most important test case.
+In the example above, the model tested was a decoder model with a single output, so the `TestAIUDecoderModels` is the most important test case.
 
 ### Test Case for Multiple Outputs
 
@@ -358,6 +358,9 @@ tests/models/test_model_expectations.py::TestAIUModelsTupleOutput::test_model_un
 
 ### Adding new expectations
 
-When adding new models expectations, please include in the PR with capture expectation tests added, the date of the image used to generate the file.**
+When adding new model expectations' tests, please ensure the following are included in the PR:
 
-Have a look at [this example](https://github.com/foundation-model-stack/aiu-fms-testing-utils/pull/48) of a PR adding a new model expectations' files and results.
+- expectation tests in the form of pytests
+- the data of the image used to generate the file and versions of other key components
+
+Have a look at [this example](https://github.com/foundation-model-stack/aiu-fms-testing-utils/pull/48) of a PR adding new model expectations' files and results.
