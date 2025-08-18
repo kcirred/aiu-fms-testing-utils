@@ -42,15 +42,6 @@ parser.add_argument(
     default=8,
     help="set this if you want to change the number of tokens generated per sequence (1 prefill + max_new_tokens-1 decodes). Note: If this value is larger than 64, this may result in switching decode programs mid generation"
 )
-
-parser.add_argument(
-    "--enforce_prompts",
-    metavar='N',
-    type=str,
-    nargs='*',
-    default=[],
-    help='if specified will ensure that we test prompts that satisfy the combination of <program_id>:<min_batch_size>,<min_prompt_length>. If the <min_batch_size>, <min_prompt_length> doesnt exist for a given case, it will be skipped'
-)
 parser.add_argument(
     "--distributed",
     action="store_true",
