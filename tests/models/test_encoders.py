@@ -188,6 +188,6 @@ def test_common_shapes(model_path, batch_size, seq_length, record_property):
     abs_mean_diff = sum(diffs) / len(diffs)
     print(f"absolute mean diff: {abs_mean_diff}")
     # Add value to xml report
-    record_property("absolute_mean_diff", abs_mean_diff)
+    record_property("absolute_mean_diff", float(abs_mean_diff))
 
     assert abs_mean_diff < validation_diff_threshold
