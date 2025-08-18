@@ -101,10 +101,19 @@ parser.add_argument(
     help="the threshold which denotes whether to pass or fail the test. The failure threshold is defined as the number of failing iterations (cross_entropy) over the total iterations. If this value exceeds the failure_rate_threshold, we will fail the test"
 )
 
+parser.add_argument(
+    "--attention_type",
+    type=str,
+    default="paged",
+    choices=["paged", "paged_fp8"],
+    help="The attention type to use"
+)
 
-# FIXME: add a more precise way to choose program with min batch and min prompt (<program>:<min_batch,min_prompt>)
+# TODO
 # FIXME: enable fp8 paged
 
+# DONE
+# FIXME: add a more precise way to choose program with min batch and min prompt (<program>:<min_batch,min_prompt>)
 # FIXME: add a threshold specified by the user to pass/fail
 # FIXME: add the error rate
 # FIXME: return the actual string (metrics-YES, tokens-YES) - DONE
@@ -118,6 +127,15 @@ SHARE_GPT_DATASET_PATH = args.share_gpt_path
 USE_DISTRIBUTED = args.distributed
 TIMING = args.timing
 warmed_up = False
+is_fp8 = "fp8" in args.attention_type
+
+attention_map = {
+    "sdpa": "sdpa_causal",
+    "paged": "spyre_paged_attn",
+    "math_fp8": "math_fp8",
+    "paged_fp8": "spyre_paged_attn_fp8",
+}
+ATTN_NAME = attention_map[args.attention_type]
 
 with open(args.program_criteria_json_path, 'r') as f:
     program_criteria_json_list = json.load(f)["programs"]
@@ -193,6 +211,16 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
     return input_ids, extra_kwargs
 
+def __maybe_prepare_fp8_weights(model_in, is_fp8):
+    if is_fp8:
+        for name, param in model_in.named_parameters():
+            if param.dtype == torch.bfloat16:
+                if param.max() > torch.finfo(torch.float16).max:
+                    dprint(
+                        f"[WARNING] You are casting param {name} to fp16, which will cause loss of accuracy. You can ignore this warning if this is intended."
+                    )
+                param.data = param.data.to(dtype=torch.float16)
+
 # metric calculator based on the cross-entropy and mean diff for each decode step
 def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
     cross_entropy = torch.nn.CrossEntropyLoss()(
@@ -223,7 +251,7 @@ if USE_DISTRIBUTED:
 model = get_model(
     architecture="hf_pretrained",
     device_type="cpu",
-    data_type=torch.float16,
+    data_type=None if is_fp8 else torch.float16,
     fused_weights=False,
     **model_path_kwargs,
     **distributed_kwargs
@@ -234,6 +262,8 @@ model.compile(
     backend="sendnn", options={"sendnn.dynamic": True}
 )
 
+__maybe_prepare_fp8_weights(model, is_fp8)
+
 validation_model = get_model(
     architecture="hf_pretrained",
     device_type="cpu",
@@ -242,12 +272,15 @@ validation_model = get_model(
     **model_path_kwargs,
     **distributed_kwargs
 )
+validation_model.eval()
+
+__maybe_prepare_fp8_weights(validation_model, is_fp8)
 
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
 failed_cases = []
 for program_id, valid_prompt in valid_prompts: # for each program
     input_ids, extra_kwargs = __prepare_inputs(valid_prompt[0], valid_prompt[1], tokenizer)
-    extra_kwargs["attn_name"] = "spyre_paged_attn"
+    extra_kwargs["attn_name"] = ATTN_NAME
     # warmup aiu model
     if not warmed_up:
         warmup_model(
