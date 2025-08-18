@@ -32,7 +32,7 @@ options:
   -h, --help            show this help message and exit
   --architecture ARCHITECTURE
                         The model architecture Eg.: hf_pretrained
-  --variant VARIANT     The model variants (configuration) to benchmark. E.g. ibm-granite/granite-3.2-8b-instruct
+  --variant VARIANT     The model variants (configuration) to benchmark. E.g. ibm-granite/granite-3.3-8b-instruct
   --model_path MODEL_PATH
                         Paths to the directory containing model's weights (.pth files sharded by tensor parallel rank, not HF weights)
   --mode {generate,model-forward}
