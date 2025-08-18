@@ -15,6 +15,8 @@ This guide explains how to run the pytest test suites in [aiu-fms-testing-utils]
 
 This test suite evaluates decoder models (i.e., for text generation) across a configurable set of shapes and parameters such as batch_size, prompt_length, max_new_tokens, metrics_thresholds, and failure_rate_thresholds.
 
+#### Single-AIU Run
+
 Example:
 
 ```bash
@@ -29,6 +31,17 @@ pytest tests/models/test_decoders.py
 ```
 
 This configuration runs the decoder test on `granite-3.3-8b-instruct` with batch size `1` and sequence length `128`. Set `FMS_TEST_SHAPES_USE_MICRO_MODELS` to test with micro models.
+
+#### Multi-AIU Run
+
+To run the test across multiple AIUs, use `torchrun`:
+
+```bash
+# Run tests on 4 AIUs
+torchrun --nproc-per-node=4 -m pytest tests/models/test_decoders.py
+```
+
+Environment variables for batch sizes, sequence lengths, and model paths still apply, while `--nproc-per-node=<num_aius>` specifies the number of AIUs to use.
 
 ### **test_model_expectations**
 
