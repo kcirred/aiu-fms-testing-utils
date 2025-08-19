@@ -308,7 +308,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
             SHARE_GPT_DATASET_PATH,
             batch_size,
             tokenizer,
-            seq_length // 2,
+            32,
             seq_length,
             seed,
             enforce_heterogeneous=True,
