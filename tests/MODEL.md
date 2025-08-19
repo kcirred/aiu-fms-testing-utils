@@ -93,7 +93,7 @@ export DEFAULT_TYPES="fp16"
 export DS_PATH=/resources/sharegpt/share_gpt.json
 ```
 
-Then, run the metrics generation script:
+Then, run the metrics generation script. The ShareGPT dataset will be automatically downloaded if it doesn't exist:
 
 ```bash
 python generate_metrics.py --architecture=hf_pretrained --model_path=$MODEL_PATH --tokenizer=$MODEL_PATH --unfuse_weights --output_dir=/tmp/aiu-fms-testing-utils/output/ --compile_dynamic --max_new_tokens=$MAX_NEW_TOKENS --min_pad_length=$SEQ_LENS --batch_size=$BATCH_SIZES --default_dtype=$DEFAULT_TYPES --sharegpt_path=$DS_PATH --num_test_tokens_per_sequence=1024
