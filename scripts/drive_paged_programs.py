@@ -258,7 +258,7 @@ __maybe_prepare_fp8_weights(model, is_fp8)
 validation_model = get_model(
     architecture="hf_pretrained",
     device_type="cpu",
-    data_type=torch.float32,
+    data_type=None if is_fp8 else torch.float32,
     fused_weights=False,
     **model_path_kwargs,
     **distributed_kwargs
