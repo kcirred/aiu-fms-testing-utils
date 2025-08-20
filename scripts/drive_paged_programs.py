@@ -99,15 +99,6 @@ parser.add_argument(
     help="The attention type to use",
 )
 
-# TODO
-# FIXME: enable fp8 paged
-
-# DONE
-# FIXME: add a more precise way to choose program with min batch and min prompt (<program>:<min_batch,min_prompt>)
-# FIXME: add a threshold specified by the user to pass/fail
-# FIXME: add the error rate
-# FIXME: return the actual string (metrics-YES, tokens-YES) - DONE
-
 args = parser.parse_args()
 
 # interleave the decodes for programs (not 3 separate generates)
@@ -383,13 +374,15 @@ for program_id, valid_prompt in valid_prompts:  # for each program
                     aiu_validation_info.get_info("tokens"),
                 )
             ):
-                cpu_tokens = [t.item() for t in reference_sentence[-max_new_tokens:]]
-                aiu_tokens = [t.item() for t in test_sentence[-max_new_tokens:]]
+                tokens_prompt = [t.item() for t in reference_sentence[:-max_new_tokens]]
+                cpu_tokens_generated = [t.item() for t in reference_sentence[-max_new_tokens:]]
+                aiu_tokens_generated = [t.item() for t in test_sentence[-max_new_tokens:]]
                 dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
-                dprint(f"CPU tokens:\n{cpu_tokens}")
-                dprint(f"AIU tokens:\n{aiu_tokens}")
-                dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens)}")
-                dprint(f"AIU output:\n{tokenizer.decode(aiu_tokens)}")
+                dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt)}")
+                dprint(f"CPU tokens:\n{cpu_tokens_generated}")
+                dprint(f"AIU tokens:\n{aiu_tokens_generated}")
+                dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens_generated)}")
+                dprint(f"AIU output:\n{tokenizer.decode(aiu_tokens_generated)}")
     else:
         raise ValueError("test type must be one of metrics or tokens")
 
