@@ -473,7 +473,12 @@ def persistent_model():
     "model_path,batch_size,seq_length,max_new_tokens", common_shapes
 )
 def test_common_shapes(
-    model_path, batch_size, seq_length, max_new_tokens, persistent_model
+    model_path,
+    batch_size,
+    seq_length,
+    max_new_tokens,
+    persistent_model,
+    record_property,
 ):
     torch.manual_seed(42)
     torch.set_grad_enabled(False)
@@ -735,6 +740,9 @@ def test_common_shapes(
         ce_failure_rate = len(ce_fail_responses_list) / total_tokens
         dprint(f"mean diff failure rate: {diff_failure_rate}")
         dprint(f"cross entropy loss failure rate: {ce_failure_rate}")
+        # Add failure rates to xml report
+        record_property("mean_diff_failure_rate", diff_failure_rate)
+        record_property("cross_entropy_loss_failure_rate", ce_failure_rate)
         if "mean_diff" not in skip_assertions:
             assert diff_failure_rate < failure_rate_threshold, (
                 f"failure rate for mean diff was too high: {diff_failure_rate}"

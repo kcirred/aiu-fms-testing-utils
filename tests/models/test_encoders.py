@@ -104,7 +104,7 @@ def reset_compiler():
 
 
 @pytest.mark.parametrize("model_path,batch_size,seq_length", common_shapes)
-def test_common_shapes(model_path, batch_size, seq_length):
+def test_common_shapes(model_path, batch_size, seq_length, record_property):
     os.environ["COMPILATION_MODE"] = "offline"
 
     dprint(
@@ -187,5 +187,7 @@ def test_common_shapes(model_path, batch_size, seq_length):
 
     abs_mean_diff = sum(diffs) / len(diffs)
     print(f"absolute mean diff: {abs_mean_diff}")
+    # Add value to xml report
+    record_property("absolute_mean_diff", float(abs_mean_diff))
 
     assert abs_mean_diff < validation_diff_threshold
