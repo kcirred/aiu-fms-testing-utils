@@ -277,8 +277,6 @@ validation_model = get_model(
 )
 validation_model.eval()
 
-__maybe_prepare_fp8_weights(validation_model, is_fp8)
-
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
 failed_cases = []
 for program_id, valid_prompt in valid_prompts:  # for each program
@@ -375,8 +373,12 @@ for program_id, valid_prompt in valid_prompts:  # for each program
                 )
             ):
                 tokens_prompt = [t.item() for t in reference_sentence[:-max_new_tokens]]
-                cpu_tokens_generated = [t.item() for t in reference_sentence[-max_new_tokens:]]
-                aiu_tokens_generated = [t.item() for t in test_sentence[-max_new_tokens:]]
+                cpu_tokens_generated = [
+                    t.item() for t in reference_sentence[-max_new_tokens:]
+                ]
+                aiu_tokens_generated = [
+                    t.item() for t in test_sentence[-max_new_tokens:]
+                ]
                 dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
                 dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt)}")
                 dprint(f"CPU tokens:\n{cpu_tokens_generated}")
