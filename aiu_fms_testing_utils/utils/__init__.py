@@ -167,7 +167,7 @@ def _merge_enforce_keep_heterogeneous(
         )
     elif len(final_list) < batch_size:
         warnings.warn(
-            f"Requested {batch_size=}, than possible combined list. Will return smaller list than batch size",
+            f"Requested {batch_size=},is greater than possible combined list. Will return smaller list than batch size",
             stacklevel=2,
         )
     return final_list
@@ -215,13 +215,15 @@ def _get_truncation_size(
                 )
             truncation_list.append((size_to_enforce, truncation_size))
         else:
-            truncation_size = sorted_sizes_in_dataset[-1]
-            if dataset_size_and_count[truncation_size] > 0:
-                truncation_list.append((size_to_enforce, truncation_size))
-            else:
-                raise ValueError(
-                    f"{size_to_enforce=} is larger than largest sample and not available."
-                )
+            if sorted_sizes_in_dataset:
+                truncation_size = sorted_sizes_in_dataset[-1]
+                if dataset_size_and_count[truncation_size] > 0:
+                    truncation_list.append((size_to_enforce, truncation_size))
+                    dataset_size_and_count[truncation_size] -= 1
+                else:
+                    raise ValueError(
+                        f"{size_to_enforce=} is larger than largest sample and not available."
+                    )
     return truncation_list
 
 
