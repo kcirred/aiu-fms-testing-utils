@@ -1,6 +1,7 @@
 from aiu_fms_testing_utils.utils import (
     get_pad_size,
     _merge_enforce_keep_heterogeneous,
+    _get_truncation_size,
     __sample_requests,
 )
 from typing import List
@@ -12,8 +13,16 @@ import json
 
 BATCH_SIZES = [0, 1, 2, 3, 4, 8]
 ENFORCE_HETEROGENEOUS = [True, False]
-TRUNCATION = [False]
-ENFORCE_SIZES = [[], [6208, 6272], [6208, 6400, 7168, 8192]]
+TRUNCATION = [True, False]
+ENFORCE_TRUNCATION_SIZE = [
+    [],
+    [64],
+    [128],
+    [64, 64],
+    [64, 128],
+    [64, 128, 256],
+    [64, 64, 64, 64],
+]
 AVAILABLE_SIZES = [
     {},
     {64: 1, 128: 1},
@@ -21,6 +30,7 @@ AVAILABLE_SIZES = [
     {64: 1, 128: 1, 256: 1},
     {64: 1, 2048: 2},
 ]
+ENFORCE_SIZES_SHAREGPT = [[], [6208, 6272], [6208, 6400, 7168, 8192]]
 SHAREGPT_SUBSAMPlE_SIZE_AND_COUNT = {
     6144: 2,
     6208: 1,
@@ -124,7 +134,9 @@ def test_get_pad_size(expected_pad_size):
 
 
 ENFORCE_TEST_COMBO = list(
-    product(BATCH_SIZES, ENFORCE_HETEROGENEOUS, ENFORCE_SIZES, SEED, TRUNCATION)
+    product(
+        BATCH_SIZES, ENFORCE_HETEROGENEOUS, ENFORCE_SIZES_SHAREGPT, SEED, TRUNCATION
+    )
 )
 
 
@@ -190,3 +202,39 @@ def test_enforce_heterogeneous_and_size(
             # enforce_size logic tries to enforce size first before populating rest of batch size.
             # Hence, if it gets stuck trying to find an enforceable size, it will end up with smaller batch.
             assert len(prompts_and_sizes) <= batch_size
+
+
+ENFORCE_TRUNCATION_COMBO = list(product(ENFORCE_TRUNCATION_SIZE, AVAILABLE_SIZES))
+
+
+@pytest.mark.parametrize(
+    "enforce_truncation_size, available_sizes", ENFORCE_TRUNCATION_COMBO
+)
+def test_get_truncation(enforce_truncation_size, available_sizes):
+    start_available_sizes = available_sizes.copy()
+    end_available_sizes = available_sizes.copy()
+    try:
+        truncation_list = _get_truncation_size(
+            end_available_sizes, enforce_truncation_size
+        )
+        if not enforce_truncation_size:
+            assert not truncation_list
+        expected_num_truncate = 0
+        for size in enforce_truncation_size:
+            if size not in end_available_sizes.keys() and end_available_sizes.keys():
+                expected_num_truncate += 1
+        # even if the size is in available sizes, you may still end up adding to truncation list
+        assert len(truncation_list) >= expected_num_truncate
+        if end_available_sizes.keys() == 0:
+            assert expected_num_truncate == 0
+        assert sum(start_available_sizes.values()) - sum(
+            end_available_sizes.values()
+        ) == len(truncation_list)
+
+        # check count never goes below 0
+        for count in available_sizes.values():
+            assert count >= 0
+    except ValueError as e:
+        assert "size_to_enforce" in f"{e}"
+    except Exception as e:
+        pytest.fail(f"Unexpeced exception: {e}")
