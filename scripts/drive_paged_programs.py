@@ -206,6 +206,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
         seq_length,
         seed,
         enforce_sizes=[seq_length],
+        truncation=True
     )
     prompt_list = []
     for prompt, _ in prompts_and_sizes:
