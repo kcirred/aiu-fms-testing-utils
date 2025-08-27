@@ -314,6 +314,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
             enforce_heterogeneous=True,
             enforce_sizes=[seq_length],  # ensure at least the max seq length is sampled
             pad_multiple=64,
+            truncation=True,
         )
     else:
         prompts_and_sizes = sample_sharegpt_requests(
