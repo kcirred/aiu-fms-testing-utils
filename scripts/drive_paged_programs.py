@@ -1,3 +1,4 @@
+import time
 from aiu_fms_testing_utils.utils.paged import ProgramCriteria, get_programs_prompts
 import torch
 import os
@@ -198,6 +199,7 @@ for program_id, min_batch_size, min_prompt_length in programs:
 
 
 def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
+    start = time.time()
     prompts_and_sizes = sample_sharegpt_requests(
         SHARE_GPT_DATASET_PATH,
         batch_size,
@@ -208,6 +210,9 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
         enforce_sizes=[seq_length],
         truncation=True
     )
+    end = time.time()
+    if local_rank == 0:
+        dprint(f"extracted prompts in {(end - start):.4f} seconds")
     prompt_list = []
     for prompt, _ in prompts_and_sizes:
         prompt_list.append(tokenizer.encode(prompt, return_tensors="pt").squeeze(0))
