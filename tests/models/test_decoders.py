@@ -553,6 +553,8 @@ def test_common_shapes(
     # prepare input_ids
     input_ids, extra_kwargs = __prepare_inputs(batch_size, seq_length, tokenizer)
     extra_kwargs["attn_name"] = ATTN_NAME
+    if "paged" in ATTN_NAME and "ibm-granite/granite-3.3-8b-instruct" in model_path and USE_DISTRIBUTED and dist.get_world_size() == 4:
+        extra_kwargs["_kvcache_num_blocks_hint"] = 2080
 
     # warmup aiu model
     warmup_model(
@@ -638,6 +640,9 @@ def test_common_shapes(
                     batch_size, seq_length, tokenizer, seed=i
                 )
                 extra_kwargs["attn_name"] = ATTN_NAME
+                if "ibm-granite/granite-3.3-8b-instruct" in model_path and USE_DISTRIBUTED and dist.get_world_size() == 4:
+                    extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+
                 cpu_validation_info = __load_validation_info(
                     model_path,
                     batch_size,

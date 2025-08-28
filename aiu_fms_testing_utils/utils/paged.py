@@ -115,7 +115,8 @@ def generate(
     # if we set these variables here, we run the risk of warming up and generating with different sizes
     _MAX_BATCH = int(os.environ["VLLM_DT_MAX_BATCH_SIZE"])
     _MAX_CONTEXT_LENGTH = int(os.environ["VLLM_DT_MAX_CONTEXT_LEN"])
-    NUM_BLOCKS = (_MAX_BATCH * _MAX_CONTEXT_LENGTH) // BLOCK_SIZE
+    # if the user provides a hint to the number of blocks to use, use it directly
+    NUM_BLOCKS = kwargs.get("_kvcache_num_blocks_hint", (_MAX_BATCH * _MAX_CONTEXT_LENGTH) // BLOCK_SIZE)
 
     if hasattr(model, "head"):
         model_dtype = model.head.weight.dtype
@@ -454,7 +455,7 @@ def generate(
     return result
 
 
-VLLM_DT_MAX_BATCH_TKV_LIMIT = 131072
+VLLM_DT_MAX_BATCH_TKV_LIMIT = os.environ.get("VLLM_DT_MAX_BATCH_TKV_LIMIT", 131072)
 
 
 class ProgramCriteria:

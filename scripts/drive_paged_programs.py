@@ -15,7 +15,7 @@ from aiu_fms_testing_utils.testing.validation import (
     top_k_loss_calculator,
 )
 from torch import distributed as dist
-from aiu_fms_testing_utils.utils import sample_sharegpt_requests, warmup_model
+from aiu_fms_testing_utils.utils import sample_sharegpt_requests, warmup_model, stagger_region
 from transformers import AutoTokenizer
 import json
 import argparse
@@ -98,6 +98,18 @@ parser.add_argument(
     default="paged",
     choices=["paged", "paged_fp8"],
     help="The attention type to use",
+)
+parser.add_argument(
+    "--stagger_load",
+    type=int,
+    default=0,
+    help="Limit the number of concurrent processes executing the model loading phase. Set to 0 to allow all processes",
+)
+parser.add_argument(
+    "--stagger_update_lazyhandle",
+    type=int,
+    default=0,
+    help="Limit the number of concurrent processes executing the AIU update_lazyhandle phase. Set to 0 to allow all processes",
 )
 
 args = parser.parse_args()
@@ -205,7 +217,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
         batch_size,
         tokenizer,
         32,
-        seq_length,
+        seq_length * 2,
         seed,
         enforce_sizes=[seq_length],
         truncation=True
@@ -214,8 +226,11 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     if local_rank == 0:
         dprint(f"extracted prompts in {(end - start):.4f} seconds")
     prompt_list = []
-    for prompt, _ in prompts_and_sizes:
-        prompt_list.append(tokenizer.encode(prompt, return_tensors="pt").squeeze(0))
+    for prompt, size in prompts_and_sizes:
+        encoded = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
+        if size > seq_length:
+            encoded = encoded[:seq_length]
+        prompt_list.append(encoded)
 
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
     return input_ids, extra_kwargs
@@ -259,28 +274,30 @@ if USE_DISTRIBUTED:
     distributed_kwargs["distributed_strategy"] = "tp"
     distributed_kwargs["group"] = dist.group.WORLD
 
-model = get_model(
-    architecture="hf_pretrained",
-    device_type="cpu",
-    data_type=None if is_fp8 else torch.float16,
-    fused_weights=False,
-    **model_path_kwargs,
-    **distributed_kwargs,
-)
+with stagger_region(args.stagger_load):
+    model = get_model(
+        architecture="hf_pretrained",
+        device_type="cpu",
+        data_type=None if is_fp8 else torch.float16,
+        fused_weights=False,
+        **model_path_kwargs,
+        **distributed_kwargs,
+    )
 
 model.eval()
 model.compile(backend="sendnn", options={"sendnn.dynamic": True})
 
 __maybe_prepare_fp8_weights(model, is_fp8)
 
-validation_model = get_model(
-    architecture="hf_pretrained",
-    device_type="cpu",
-    data_type=None if is_fp8 else torch.float32,
-    fused_weights=False,
-    **model_path_kwargs,
-    **distributed_kwargs,
-)
+with stagger_region(args.stagger_load):
+    validation_model = get_model(
+        architecture="hf_pretrained",
+        device_type="cpu",
+        data_type=None if is_fp8 else torch.float32,
+        fused_weights=False,
+        **model_path_kwargs,
+        **distributed_kwargs,
+    )
 validation_model.eval()
 
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
@@ -290,6 +307,9 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         valid_prompt[0], valid_prompt[1], tokenizer
     )
     extra_kwargs["attn_name"] = ATTN_NAME
+    if "ibm-granite/granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
+        extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+    
     # warmup aiu model
     if not warmed_up:
         warmup_model(
@@ -297,6 +317,7 @@ for program_id, valid_prompt in valid_prompts:  # for each program
             input_ids,
             max_new_tokens=max_new_tokens,
             compile_dynamic_sendnn=True,
+            stagger_update_lazyhandle=args.stagger_update_lazyhandle,
             **extra_kwargs,
         )
         warmed_up = True
