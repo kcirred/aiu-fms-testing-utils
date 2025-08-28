@@ -227,6 +227,13 @@ def _get_truncation_size(
     return truncation_list
 
 
+def _remove_list_from_list(main_list, list_to_remove):
+    for item in list_to_remove:
+        if item in main_list:
+            main_list.remove(item)
+    return main_list
+
+
 def __sample_requests(
     prompt_list: List[str],
     num_requests: int,
@@ -322,7 +329,7 @@ def __sample_requests(
                     sample_size_counter[size] -= 1
                 else:
                     needs_truncation.append(size)
-            enforce_sizes = [_ for _ in enforce_sizes if _ not in needs_truncation]
+            enforce_sizes = _remove_list_from_list(enforce_sizes, needs_truncation)
 
             enforce_sizes_with_truncation = _get_truncation_size(
                 truncation_size_counter, needs_truncation
@@ -356,9 +363,13 @@ def __sample_requests(
         # Forcing search for enforce_sizes
         elif enforce_sizes or enforce_sizes_with_truncation:
             current_padded_size = get_pad_size(prompt_len, pad_multiple)
+            # if it is in the enforce_size list
             if current_padded_size in enforce_sizes:
                 enforce_sizes.remove(current_padded_size)
                 enforced_dataset.append((prompt, prompt_len))
+            # NOTE: this should not be `elif` despite enforce_sizes and enforce_sizes_with_truncation
+            # are mutually exclusive because we allow same prompt to be used in enforce_sizes_with_truncation
+            # even if it is taken from enforce_sizes
             if enforce_sizes_with_truncation:
                 truncation_found: Tuple[int, int] = next(
                     (
