@@ -309,9 +309,9 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
             batch_size,
             tokenizer,
             32,
-            seq_length,
+            seq_length*2, # this ensures we get sequences back
             seed,
-            enforce_heterogeneous=True,
+            enforce_heterogeneous=False,
             enforce_sizes=[seq_length],  # ensure at least the max seq length is sampled
             pad_multiple=64,
             truncation=True,
@@ -327,9 +327,16 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
         )
 
     prompt_list = []
-    for prompt, _ in prompts_and_sizes:
-        prompt_list.append(tokenizer.encode(prompt, return_tensors="pt").squeeze(0))
+    size_list = []
+    for prompt, size in prompts_and_sizes:
+        encoded = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
+        if size > seq_length:
+            encoded = encoded[:seq_length]
+        
+        size_list.append(encoded.size(0))
+        prompt_list.append(encoded)
 
+    dprint(f"found prompts with sizes: {size_list}")
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
     return input_ids, extra_kwargs
 
