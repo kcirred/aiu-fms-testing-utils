@@ -430,7 +430,7 @@ def sample_granite_3_3_long_answerable_requests(
     num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
     prompt_length_min: int = 32,
-    prompt_length_max: int = 64,
+    prompt_length_max: int = 65536,
     seed: Optional[int] = None,
     enforce_heterogeneous: bool = False,
     enforce_sizes: List[int] = [],
