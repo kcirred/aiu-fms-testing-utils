@@ -15,7 +15,10 @@ from aiu_fms_testing_utils.testing.validation import (
     GoldenTokenHook,
     top_k_loss_calculator,
 )
-from aiu_fms_testing_utils.utils import sample_sharegpt_requests
+from aiu_fms_testing_utils.utils import (
+    sample_sharegpt_requests,
+    sample_granite_3_3_long_answerable_requests,
+)
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
 from transformers import AutoTokenizer
@@ -74,6 +77,20 @@ parser.add_argument(
     type=int,
     help="max number of generated tokens",
     default=100,
+)
+parser.add_argument(
+    "--device",
+    type=str,
+    default="cpu",
+    choices=["cuda", "cpu"],
+    help="If set to `cuda` allows user to benchmark threshold against cuda float32",
+)
+parser.add_argument(
+    "--sample_type",
+    type=str,
+    default="sharegpt",
+    choices=["sharegpt", "long_answerable"],
+    help="If set to one of the choices, overrides where to draw samples from",
 )
 parser.add_argument(
     "--sharegpt_path",
@@ -185,9 +202,15 @@ def filter_before_eos(metrics, filter_indexes):
 
 
 def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
-    prompts_and_sizes = sample_sharegpt_requests(
-        args.sharegpt_path, batch_size, tokenizer, seq_length // 2, seq_length, seed
-    )
+    # TODO: replace args.sharegpt_path with just args.dataset_path if there is no other scripts using `sharegpt_path`
+    if args.sample_type == "sharegpt":
+        prompts_and_sizes = sample_sharegpt_requests(
+            args.sharegpt_path, batch_size, tokenizer, seq_length // 2, seq_length, seed
+        )
+    elif args.sample_type == "long_answerable":
+        prompts_and_sizes = sample_granite_3_3_long_answerable_requests(
+            args.sharegpt_path, batch_size, tokenizer, seq_length // 2, seq_length, seed
+        )
     prompt_list = []
     for prompt, _ in prompts_and_sizes:
         prompt_list.append(tokenizer.encode(prompt, return_tensors="pt").squeeze(0))
@@ -218,36 +241,36 @@ if not args.skip_computation:
     )
 
     cuda_model.eval()
-    print("loaded cuda model")
+    print(f"loaded cuda model with {default_dtype=}")
 
     # prepare the cpu model (this is the reference)
-    cpu_model = get_model(
+    fp32_model = get_model(
         architecture=args.architecture,
         variant=args.variant,
         model_path=args.model_path,
-        device_type="cpu",
+        device_type=args.device,
         data_type=torch.float32,
         distributed_strategy=distr_param,
         group=dist.group.WORLD,
         **extra_get_model_kwargs,
     )
-    cpu_model.eval()
-    print("loaded cpu model")
+    fp32_model.eval()
+    print(f"loaded fp32 model with {args.device=}")
 
     ids, padding_kwargs = __prepare_inputs(
         args.batch_size, args.min_pad_length, tokenizer
     )
 
     # first test validation level 0
-    cpu_validation_info = extract_validation_information(
-        cpu_model,
+    fp32_validation_info = extract_validation_information(
+        fp32_model,
         ids,
         args.max_new_tokens,
         LogitsExtractorHook(),
         attn_algorithm="math",
         **padding_kwargs,
     )
-    cpu_static_tokens = cpu_validation_info.get_info("tokens")
+    cpu_static_tokens = fp32_validation_info.get_info("tokens")
     print("extracted cpu validation information")
 
     eos_indexes = find_eos_index(cpu_static_tokens, tokenizer.eos_token_id)
@@ -302,12 +325,22 @@ prob_diff_metrics = []
 prob_ce_loss_metrics = []
 
 for i in range(num_test_tokens_per_sequence // args.max_new_tokens):
-    cpu_path = os.path.join(args.output_dir, f"{prefix}.cpu_validation_info.{i}.out")
+    if args.device == "cuda":
+        fp32_path = os.path.join(
+            args.output_dir, f"{prefix}.{args.device}_fp32_validation_info.{i}.out"
+        )
+    elif args.device == "cpu":
+        # NOTE: kept for backwards compatibility
+        fp32_path = os.path.join(
+            args.output_dir, f"{prefix}.cpu_validation_info.{i}.out"
+        )
+    else:
+        raise ValueError(f"device must be cuda or cpu, currently set as {args.device=}")
     cuda_path = os.path.join(args.output_dir, f"{prefix}.cuda_validation_info.{i}.out")
-    if os.path.exists(cpu_path) and os.path.exists(cuda_path):
-        print(f"found the logits at {cpu_path}, reusing")
-        cpu_validation_info = load_validation_information(
-            cpu_path, "logits", args.batch_size, tokenizer
+    if os.path.exists(fp32_path) and os.path.exists(cuda_path):
+        print(f"found the logits at {fp32_path}, reusing")
+        fp32_validation_info = load_validation_information(
+            fp32_path, "logits", args.batch_size, tokenizer
         )
         cuda_validation_info = load_validation_information(
             cuda_path, "logits", args.batch_size, tokenizer
@@ -319,8 +352,8 @@ for i in range(num_test_tokens_per_sequence // args.max_new_tokens):
 
         # only need to compute this once if we aren't generating more test data
         if num_test_tokens_per_sequence > args.max_new_tokens:
-            cpu_validation_info = extract_validation_information(
-                cpu_model,
+            fp32_validation_info = extract_validation_information(
+                fp32_model,
                 ids,
                 args.max_new_tokens,
                 LogitsExtractorHook(),
@@ -333,7 +366,7 @@ for i in range(num_test_tokens_per_sequence // args.max_new_tokens):
             cuda_model,
             ids.to("cuda"),
             args.max_new_tokens,
-            GoldenTokenHook(cpu_validation_info.get_info("tokens"), "cuda"),
+            GoldenTokenHook(fp32_validation_info.get_info("tokens"), "cuda"),
             only_last_token=True,
             **{k: v.to("cuda") for k, v in padding_kwargs.items()},
         )
@@ -341,35 +374,35 @@ for i in range(num_test_tokens_per_sequence // args.max_new_tokens):
         print("extracted cuda validation information level 1")
 
         if local_rank == 0:
-            cpu_validation_info.save(cpu_path)
+            fp32_validation_info.save(fp32_path)
             cuda_validation_info.save(cuda_path)
 
     eos_indexes = find_eos_index(
-        cpu_validation_info.get_info("tokens"), tokenizer.eos_token_id
+        fp32_validation_info.get_info("tokens"), tokenizer.eos_token_id
     )
     level_1_metrics = capture_level_1_metrics(
-        cpu_validation_info.get_info("logits"),
+        fp32_validation_info.get_info("logits"),
         cuda_validation_info.get_info("logits"),
         top_k_loss_calculator(args.topk_per_token, prob_mean),
     )
     prob_mean_metrics.extend(filter_before_eos(level_1_metrics, eos_indexes))
 
     level_1_metrics = capture_level_1_metrics(
-        cpu_validation_info.get_info("logits"),
+        fp32_validation_info.get_info("logits"),
         cuda_validation_info.get_info("logits"),
         top_k_loss_calculator(args.topk_per_token, prob_std),
     )
     prob_std_metrics.extend(filter_before_eos(level_1_metrics, eos_indexes))
 
     level_1_metrics = capture_level_1_metrics(
-        cpu_validation_info.get_info("logits"),
+        fp32_validation_info.get_info("logits"),
         cuda_validation_info.get_info("logits"),
         top_k_loss_calculator(args.topk_per_token, cross_entropy),
     )
     prob_ce_loss_metrics.extend(filter_before_eos(level_1_metrics, eos_indexes))
 
     level_1_metrics = capture_level_1_metrics(
-        cpu_validation_info.get_info("logits"),
+        fp32_validation_info.get_info("logits"),
         cuda_validation_info.get_info("logits"),
         top_k_loss_calculator(args.topk_per_token, diff_mean),
     )

@@ -18,6 +18,7 @@ import torch.nn as nn
 import math
 import contextlib
 import warnings
+import pandas as pd
 
 
 @contextlib.contextmanager
@@ -422,6 +423,41 @@ def __sample_requests(
         warnings.warn("Returning dataset not equal to number requested", stacklevel=2)
 
     return filtered_dataset
+
+
+def sample_granite_3_3_long_answerable_requests(
+    dataset_path: str,
+    num_requests: int,
+    tokenizer: PreTrainedTokenizerBase,
+    prompt_length_min: int = 32,
+    prompt_length_max: int = 64,
+    seed: Optional[int] = None,
+    enforce_heterogeneous: bool = False,
+    enforce_sizes: List[int] = [],
+    truncation: bool = False,
+    pad_multiple: int = 64,
+) -> List[Tuple[str, int]]:
+    if not os.path.exists(dataset_path):
+        print("error dataset does not exist")
+
+    # Load the dataset.
+    with open(dataset_path, "r") as f:
+        df = pd.read_json(f, lines=True)
+    # Filter out the conversations with less than 2 turns.
+    dataset: List[str] = df["granite_3_3_prompt"].tolist()
+
+    return __sample_requests(
+        dataset,
+        num_requests,
+        tokenizer,
+        prompt_length_min,
+        prompt_length_max,
+        seed,
+        enforce_heterogeneous,
+        enforce_sizes,
+        truncation,
+        pad_multiple,
+    )
 
 
 def sample_sharegpt_requests(
