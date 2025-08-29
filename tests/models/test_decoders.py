@@ -68,6 +68,16 @@ DATASET_PATH = os.environ.get("DATASET_PATH", os.path.expanduser("~/share_gpt.js
 USE_MICRO_MODELS = os.environ.get("FMS_TEST_SHAPES_USE_MICRO_MODELS", "1") == "1"
 USE_DISTRIBUTED = os.environ.get("FMS_TEST_SHAPES_DISTRIBUTED", "0") == "1"
 TIMING = os.environ.get("TIMING", "")
+DATASET = os.environ.get("DATASET", "sharegpt")
+ALLOWED_DATASET = {"sharegpt", "long-ctx"}
+if DATASET not in ALLOWED_DATASET:
+    raise ValueError(
+        f"{DATASET} is not a valid environment for DATASET. Please use {ALLOWED_DATASET}"
+    )
+if "SHARE_GPT_DATASET_PATH" in os.environ:
+    warnings.warn(
+        "SHARE_GPT_DATASET_PATH is deprecated, please use DATASET_PATH environment instead"
+    )
 
 ATTN_TYPE = os.environ.get("FMS_TEST_SHAPES_ATTN_TYPE", "sdpa")
 attention_map = {
