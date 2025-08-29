@@ -22,6 +22,7 @@ from aiu_fms_testing_utils.testing.validation import (
 from aiu_fms_testing_utils.utils import (
     warmup_model,
     sample_sharegpt_requests,
+    sample_granite_3_3_long_answerable_requests,
 )
 import json
 from transformers import AutoTokenizer
@@ -312,27 +313,73 @@ def __maybe_get_gptq_kwargs(model_path):
 
 def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     if "paged" in ATTN_NAME:
-        prompts_and_sizes = sample_sharegpt_requests(
-            DATASET_PATH,
-            batch_size,
-            tokenizer,
-            32,
-            seq_length * 2,  # this ensures we get sequences back
-            seed,
-            enforce_heterogeneous=False,
-            enforce_sizes=[seq_length],  # ensure at least the max seq length is sampled
-            pad_multiple=64,
-            truncation=True,
-        )
+        if DATASET == "sharegpt":
+            prompts_and_sizes = sample_sharegpt_requests(
+                DATASET_PATH,
+                batch_size,
+                tokenizer,
+                32,
+                seq_length * 2,  # this ensures we get sequences back
+                seed,
+                enforce_heterogeneous=False,
+                enforce_sizes=[
+                    seq_length
+                ],  # ensure at least the max seq length is sampled
+                pad_multiple=64,
+                truncation=True,
+            )
+        elif DATASET == "long-ctx":
+            dataset_lowerbound = 6336
+            dataset_upperbound = 31744
+            if seq_length > dataset_upperbound or seq_length < dataset_lowerbound:
+                warnings.warn(
+                    f"You have chosen {seq_length=} which isn't within the range of {dataset_lowerbound}-{dataset_upperbound} of the dataset",
+                    stacklevel=2,
+                )
+            prompts_and_sizes = sample_granite_3_3_long_answerable_requests(
+                DATASET_PATH,
+                batch_size,
+                tokenizer,
+                4096,
+                32768,  # for this dataset has no prompts longer or equal to 32768
+                seed,
+                enforce_heterogeneous=False,
+                enforce_sizes=[
+                    seq_length
+                ],  # ensure at least the max seq length is sampled
+                pad_multiple=64,
+                truncation=False,
+            )
+        else:
+            raise ValueError(f"env DATASET must be from the option: {ALLOWED_DATASET}")
     else:
-        prompts_and_sizes = sample_sharegpt_requests(
-            DATASET_PATH,
-            batch_size,
-            tokenizer,
-            seq_length // 2,
-            seq_length,
-            seed,
-        )
+        if DATASET == "sharegpt":
+            prompts_and_sizes = sample_sharegpt_requests(
+                DATASET_PATH,
+                batch_size,
+                tokenizer,
+                seq_length // 2,
+                seq_length,
+                seed,
+            )
+        elif DATASET == "long-ctx":
+            dataset_lowerbound = 6336
+            dataset_upperbound = 31744
+            if seq_length > dataset_upperbound or seq_length < dataset_lowerbound:
+                warnings.warn(
+                    f"You have chosen {seq_length=} which isn't within the range of {dataset_lowerbound}-{dataset_upperbound} of the dataset",
+                    stacklevel=2,
+                )
+            prompts_and_sizes = sample_granite_3_3_long_answerable_requests(
+                DATASET_PATH,
+                batch_size,
+                tokenizer,
+                seq_length // 2,
+                seq_length,
+                seed,
+            )
+        else:
+            raise ValueError(f"env DATASET must be from the option: {ALLOWED_DATASET}")
 
     prompt_list = []
     size_list = []
