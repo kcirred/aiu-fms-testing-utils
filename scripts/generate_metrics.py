@@ -285,26 +285,16 @@ if not args.skip_computation:
     )
 
     # first test validation level 0
-    if args.device == "cpu":
-        fp32_validation_info = extract_validation_information(
-            fp32_model,
-            ids.to(args.device),
-            args.max_new_tokens,
-            LogitsExtractorHook(),
-            attn_algorithm="math",
-            **{k: v.to(args.device) for k, v in extra_generation_kwargs.items()},
-            attn_name=attn_name,
-        )
-    elif args.device == "cuda":
-        fp32_validation_info = extract_validation_information(
-            fp32_model,
-            ids.to(args.device),
-            args.max_new_tokens,
-            LogitsExtractorHook(),
-            only_last_token=True,
-            **{k: v.to("cuda") for k, v in extra_generation_kwargs.items()},
-            attn_name=attn_name,
-        )
+    fp32_validation_info = extract_validation_information(
+        fp32_model,
+        ids.to(args.device),
+        args.max_new_tokens,
+        LogitsExtractorHook(),
+        attn_algorithm="math",
+        **{k: v.to(args.device) for k, v in extra_generation_kwargs.items()},
+        attn_name=attn_name,
+    )
+
     cpu_static_tokens = fp32_validation_info.get_info("tokens")
     print("extracted cpu validation information")
 
@@ -388,26 +378,15 @@ for i in range(num_test_tokens_per_sequence // args.max_new_tokens):
 
         # only need to compute this once if we aren't generating more test data
         if num_test_tokens_per_sequence > args.max_new_tokens:
-            if args.device == "cpu":
-                fp32_validation_info = extract_validation_information(
-                    fp32_model,
-                    ids,
-                    args.max_new_tokens,
-                    LogitsExtractorHook(),
-                    attn_algorithm="math",
-                    **extra_generation_kwargs,
-                    attn_name=attn_name,
-                )
-            elif args.device == "cuda":
-                fp32_validation_info = extract_validation_information(
-                    fp32_model,
-                    ids.to("cuda"),
-                    args.max_new_tokens,
-                    LogitsExtractorHook(),
-                    only_last_token=True,
-                    **{k: v.to("cuda") for k, v in extra_generation_kwargs.items()},
-                    attn_name=attn_name,
-                )
+            fp32_validation_info = extract_validation_information(
+                fp32_model,
+                ids.to(args.device),
+                args.max_new_tokens,
+                LogitsExtractorHook(),
+                attn_algorithm="math",
+                **{k: v.to(args.device) for k, v in extra_generation_kwargs.items()},
+                attn_name=attn_name,
+            )
 
         # generate aiu validation info
         cuda_validation_info = extract_validation_information(
