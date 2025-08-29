@@ -307,7 +307,7 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         valid_prompt[0], valid_prompt[1], tokenizer
     )
     extra_kwargs["attn_name"] = ATTN_NAME
-    if "ibm-granite/granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
+    if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
         extra_kwargs["_kvcache_num_blocks_hint"] = 2080
     
     # warmup aiu model
