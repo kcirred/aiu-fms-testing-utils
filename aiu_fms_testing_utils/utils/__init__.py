@@ -247,25 +247,32 @@ def __sample_requests(
     prompt_length_max: int = 64,
     seed: Optional[int] = None,
     enforce_heterogeneous: bool = False,
-    enforce_sizes: List[int] = [],
+    enforce_sizes: List[int] | None = None,
     truncation: bool = False,
     pad_multiple: int = 64,
 ):
     """
-    Shuffles dataset, tokenizes the prompts and then filters
+    Shuffles dataset, tokenizes the prompts and then filters.
 
     Args:
         prompt_length_min (int): filters out prompts shorter than this value.
         prompt_length_max (int): filters out prompts larger than this value.
         enforce_sizes (List[int]): sample request will grab a prompt with this length if available.
-        enforce_heterogeneous (bool): Pads all prompts within batch size to nearest multiple of 64.
+        enforce_heterogeneous (bool): Pads all prompts within batch size to nearest multiple of `pad_multiple`.
+            However, if enforce_sizes is not empty, it will set enforce_heteogeneous to False.
         pad_multiple (int): Used only when enforce_heterogeneous is True or enforce_sizes is not empty, asserts that prompt_length would be padded to this multiple
         List[Tuple[str, int]]: a filtered dataset
+
+    Returns:
+        List[Tuple[str, int]]
     """
 
     assert prompt_length_max >= prompt_length_min, (
         "Please enter valid prompt length max/min values"
     )
+
+    if enforce_sizes is None:
+        enforce_sizes = []
 
     if enforce_heterogeneous and enforce_sizes:
         warnings.warn(
@@ -433,7 +440,7 @@ def sample_sharegpt_requests(
     prompt_length_max: int = 64,
     seed: Optional[int] = None,
     enforce_heterogeneous: bool = False,
-    enforce_sizes: List[int] = [],
+    enforce_sizes: List[int] | None = None,
     truncation: bool = False,
     pad_multiple: int = 64,
 ) -> List[Tuple[str, int]]:
@@ -443,6 +450,9 @@ def sample_sharegpt_requests(
             "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json",
             dataset_path,
         )
+
+    if enforce_sizes is None:
+        enforce_sizes = []
 
     # Load the dataset.
     with open(dataset_path, encoding="utf-8") as f:
@@ -473,11 +483,14 @@ def sample_squad_v2_qa_requests(
     prompt_length_max: int = 64,
     seed: Optional[int] = None,
     enforce_heterogeneous: bool = False,
-    enforce_sizes: List[int] = [],
+    enforce_sizes: List[int] | None = None,
     truncation: bool = False,
     pad_multiple: int = 64,
 ) -> List[Tuple[str, int]]:
     from datasets import load_dataset
+
+    if enforce_sizes is None:
+        enforce_sizes = []
 
     if os.path.exists(dataset_path):
         ds = load_dataset(dataset_path)["train"]
