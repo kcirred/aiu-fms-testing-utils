@@ -64,9 +64,7 @@ micro_model_mapping = {
     ),
 }
 
-SHARE_GPT_DATASET_PATH = os.environ.get(
-    "SHARE_GPT_DATASET_PATH", os.path.expanduser("~/share_gpt.json")
-)
+DATASET_PATH = os.environ.get("DATASET_PATH", os.path.expanduser("~/share_gpt.json"))
 USE_MICRO_MODELS = os.environ.get("FMS_TEST_SHAPES_USE_MICRO_MODELS", "1") == "1"
 USE_DISTRIBUTED = os.environ.get("FMS_TEST_SHAPES_DISTRIBUTED", "0") == "1"
 TIMING = os.environ.get("TIMING", "")
@@ -305,11 +303,11 @@ def __maybe_get_gptq_kwargs(model_path):
 def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     if "paged" in ATTN_NAME:
         prompts_and_sizes = sample_sharegpt_requests(
-            SHARE_GPT_DATASET_PATH,
+            DATASET_PATH,
             batch_size,
             tokenizer,
             32,
-            seq_length*2, # this ensures we get sequences back
+            seq_length * 2,  # this ensures we get sequences back
             seed,
             enforce_heterogeneous=False,
             enforce_sizes=[seq_length],  # ensure at least the max seq length is sampled
@@ -318,7 +316,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
         )
     else:
         prompts_and_sizes = sample_sharegpt_requests(
-            SHARE_GPT_DATASET_PATH,
+            DATASET_PATH,
             batch_size,
             tokenizer,
             seq_length // 2,
@@ -332,7 +330,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
         encoded = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
         if size > seq_length:
             encoded = encoded[:seq_length]
-        
+
         size_list.append(encoded.size(0))
         prompt_list.append(encoded)
 
