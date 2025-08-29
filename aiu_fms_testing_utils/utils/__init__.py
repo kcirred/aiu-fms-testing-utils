@@ -18,6 +18,7 @@ import torch.nn as nn
 import math
 import contextlib
 import warnings
+import pandas as pd
 
 
 @contextlib.contextmanager
@@ -167,7 +168,7 @@ def _merge_enforce_keep_heterogeneous(
         )
     elif len(final_list) < batch_size:
         warnings.warn(
-            f"Requested {batch_size=},is greater than possible combined list. Will return smaller list than batch size",
+            f"Requested {batch_size=}, is greater than possible combined list. Will return smaller list than batch size",
             stacklevel=2,
         )
     return final_list
@@ -180,7 +181,7 @@ def _get_truncation_size(
     Given a list of sizes to enforce and a dictionary of sizes that exists and their count,
     find out which sizes are not possible and create a new truncation list which will grab from
     the next larger size in order to enforce that size.
-    If there are no larger sizes, try totake the largest from the dataset.
+    If there are no larger sizes, try to take the largest from the dataset.
 
     Args:
         dataset_size_and_count (Dict[int, int]): List of possible sizes and counts for the dataset
@@ -200,13 +201,16 @@ def _get_truncation_size(
 
         # if valid search found
         if found_idx < len(sorted_sizes_in_dataset):
-            found_size = sorted_sizes_in_dataset[found_idx]
             while found_idx < len(sorted_sizes_in_dataset):
-                found_size = sorted_sizes_in_dataset[found_idx]
-                if dataset_size_and_count[found_size] > 0:
-                    dataset_size_and_count[found_size] -= 1
-                    truncation_size = found_size
+                # reset the candidate to the new found_idx
+                candidate = sorted_sizes_in_dataset[found_idx]
+                # Have to check if this prompt length is available with the count
+                if dataset_size_and_count[candidate] > 0:
+                    # if count is > 0 then decrement the count as it no longer can be used for future prompts
+                    dataset_size_and_count[candidate] -= 1
+                    truncation_size = candidate
                     break
+                # if prompt length is not avaible increment to see if the next larger prompt is available
                 found_idx += 1
 
             if truncation_size is None:
@@ -215,7 +219,9 @@ def _get_truncation_size(
                 )
             truncation_list.append((size_to_enforce, truncation_size))
         else:
+            # this occurs when size_to_enforce is outside of the max range of dataset
             if sorted_sizes_in_dataset:
+                # try to grab the largest size from the end of sorted list if it is available otherwise throw error
                 truncation_size = sorted_sizes_in_dataset[-1]
                 if dataset_size_and_count[truncation_size] > 0:
                     truncation_list.append((size_to_enforce, truncation_size))
@@ -417,6 +423,41 @@ def __sample_requests(
         warnings.warn("Returning dataset not equal to number requested", stacklevel=2)
 
     return filtered_dataset
+
+
+def sample_granite_3_3_long_answerable_requests(
+    dataset_path: str,
+    num_requests: int,
+    tokenizer: PreTrainedTokenizerBase,
+    prompt_length_min: int = 32,
+    prompt_length_max: int = 65536,
+    seed: Optional[int] = None,
+    enforce_heterogeneous: bool = False,
+    enforce_sizes: List[int] = [],
+    truncation: bool = False,
+    pad_multiple: int = 64,
+) -> List[Tuple[str, int]]:
+    if not os.path.exists(dataset_path):
+        print("error dataset does not exist")
+
+    # Load the dataset.
+    with open(dataset_path, "r") as f:
+        df = pd.read_json(f, lines=True)
+    # Filter out the conversations with less than 2 turns.
+    dataset: List[str] = df["granite_3_3_prompt"].tolist()
+
+    return __sample_requests(
+        dataset,
+        num_requests,
+        tokenizer,
+        prompt_length_min,
+        prompt_length_max,
+        seed,
+        enforce_heterogeneous,
+        enforce_sizes,
+        truncation,
+        pad_multiple,
+    )
 
 
 def sample_sharegpt_requests(
