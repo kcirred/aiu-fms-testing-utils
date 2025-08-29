@@ -267,6 +267,12 @@ def __sample_requests(
         "Please enter valid prompt length max/min values"
     )
 
+    if enforce_heterogeneous and enforce_sizes:
+        warnings.warn(
+            f"{enforce_heterogeneous=} and {enforce_sizes=}, these two are not designed to be used at the same time. Forcing enforce_heterogeneous to False"
+        )
+        enforce_heterogeneous = False
+
     # Based on min/max prompt length, one can back out the number of possible heterogeneous values
     max_heterogeneous_combinations = (prompt_length_max // pad_multiple) - (
         (prompt_length_min - 1) // pad_multiple
@@ -348,7 +354,7 @@ def __sample_requests(
         if len(filtered_dataset) == num_requests and not enforce_sizes:
             break
 
-        # This section is for enforce heterogeneous
+        # NOTE: This section is for enforce heterogeneous, does not work with enforce_sizes
         if (
             enforce_heterogeneous
             and max_heterogeneous_combinations > len(filtered_dataset)
@@ -356,11 +362,6 @@ def __sample_requests(
         ):
             # for _, size in filtered_dataset:
             current_padded_size = get_pad_size(prompt_len, pad_multiple)
-
-            # If it's in the list of enforce_sizes it is enforced, can remove from list
-            if current_padded_size in enforce_sizes:
-                enforce_sizes.remove(current_padded_size)
-                enforced_dataset.append((prompt, prompt_len))
 
             if current_padded_size not in seen_sizes:
                 filtered_dataset.append((prompt, prompt_len))
