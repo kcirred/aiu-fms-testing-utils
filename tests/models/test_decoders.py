@@ -195,25 +195,30 @@ if compile_dynamic_sendnn:
 # if a models failure thresholds do not exist in this dict, default to the default_metrics_threshold defined above
 # threshold key is (model_id, is_tiny_model)
 fail_thresholds = {
-    (LLAMA_3p1_8B_INSTRUCT, False): (
+    # FORMAT: (model, use_tiny_model, dataset, seq_length):(ce, diff_mean)
+    (LLAMA_3p1_8B_INSTRUCT, False, "sharegpt", None): (
         2.6994638133048965,
         0.00047589250549208347,
     ),
-    (GRANITE_3p2_8B_INSTRUCT, False): (
+    (GRANITE_3p2_8B_INSTRUCT, False, "sharegpt", None): (
         2.3919514417648315,
         0.0005767398688476533,
     ),
-    (GRANITE_3p3_8B_INSTRUCT, False): (
+    (GRANITE_3p3_8B_INSTRUCT, False, "sharegpt", None): (
         2.4444521379470827,
         0.0004970188625156878,
     ),
-    (GRANITE_20B_CODE_INSTRUCT_8K, False): (
+    (GRANITE_20B_CODE_INSTRUCT_8K, False, "sharegpt", None): (
         2.640706129074097,
         0.00034344267623964697,
     ),
-    (LLAMA_3p1_70B_INSTRUCT, False): (
+    (LLAMA_3p1_70B_INSTRUCT, False, "sharegpt", None): (
         2.841279556751251,
         0.0044301633024588115,
+    ),
+    (GRANITE_3p3_8B_INSTRUCT, False, "long-ctx", None): (
+        2.194241464138031,
+        0.09999816179275513,
     ),
 }
 
@@ -230,11 +235,15 @@ if model_configuration_path != "":
                 model_config = json.loads(line)
                 if model_config["frequency"] <= frequency:
                     common_model_paths.append(model_config["model_id"])
+                    # TODO: Replace `None` for seq_length once it is available
                     # assume fullsize models
-                    fail_thresholds[(model_config["model_id"], USE_MICRO_MODELS)] = (
+                    fail_thresholds[
+                        (model_config["model_id"], USE_MICRO_MODELS, DATASET, None)
+                    ] = (
                         model_config["ce"],
                         model_config["mean_diff"],
                     )
+
             except json.JSONDecodeError:
                 print(f"config contained an improper json line: {line.strip()}")
 
@@ -775,14 +784,15 @@ def test_common_shapes(
                 # if we have a micro model with real weights, but no real thresholds, default to the full model thresholds
                 if USE_MICRO_MODELS:
                     ce_threshold, diff_threshold = fail_thresholds.get(
-                        (model_path, True),
+                        (model_path, True, DATASET, None),
                         fail_thresholds.get(
-                            (model_path, False), default_metrics_threshold
+                            (model_path, False, DATASET, None),
+                            default_metrics_threshold,
                         ),
                     )
                 else:
                     ce_threshold, diff_threshold = fail_thresholds.get(
-                        (model_path, False), default_metrics_threshold
+                        (model_path, False, DATASET, None), default_metrics_threshold
                     )
 
             # get all failed responses for each metric
