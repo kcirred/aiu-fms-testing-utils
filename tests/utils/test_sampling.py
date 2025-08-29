@@ -86,7 +86,11 @@ def _prepare_sub_sharegpt_dataset(prompt_length_min, prompt_length_max, tokenize
     return dataset
 
 
-DATASET = _prepare_sub_sharegpt_dataset(PROMPT_MIN_LENGTH, PROMPT_MAX_LENGTH, TOKENIZER)
+@pytest.fixture(scope="session")
+def sub_sharegpt_dataset():
+    return _prepare_sub_sharegpt_dataset(
+        PROMPT_MIN_LENGTH, PROMPT_MAX_LENGTH, TOKENIZER
+    )
 
 
 def expected_error(num_request: int, enforce_sizes: List[int]):
@@ -145,7 +149,12 @@ ENFORCE_TEST_COMBO = list(
     ENFORCE_TEST_COMBO,
 )
 def test_enforce_heterogeneous_and_size(
-    batch_size, enforce_heterogeneous, enforce_sizes, seed, truncation
+    batch_size,
+    enforce_heterogeneous,
+    enforce_sizes,
+    seed,
+    truncation,
+    sub_sharegpt_dataset,
 ):
     enforce_size_copy = enforce_sizes.copy()
 
@@ -156,7 +165,7 @@ def test_enforce_heterogeneous_and_size(
             expected_error(batch_size, enforce_size_copy)
     else:
         prompts_and_sizes = __sample_requests(
-            DATASET,
+            sub_sharegpt_dataset,
             batch_size,
             TOKENIZER,
             PROMPT_MIN_LENGTH,
