@@ -130,8 +130,9 @@ def get_default_validation_prefix(
     seq_length: int,
     dtype: str,
     attn_type: str,
+    dataset: str = "sharegpt",
 ):
-    return f"{model_id.replace('/', '--')}_max-new-tokens-{max_new_tokens}_batch-size-{batch_size}_seq-length-{seq_length}_dtype-{dtype}_attn-type-{attn_type}"
+    return f"{model_id.replace('/', '--')}_max-new-tokens-{max_new_tokens}_batch-size-{batch_size}_seq-length-{seq_length}_dtype-{dtype}_dataset-{dataset}_attn-type-{attn_type}"
 
 
 def load_validation_information(
