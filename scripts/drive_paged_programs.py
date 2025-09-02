@@ -277,7 +277,7 @@ with open(args.program_criteria_json_path, "r") as f:
         enforce_prompt_split = program_str.split(":")
         if len(enforce_prompt_split) == 1:
             programs.append(
-                (int(enforce_prompt_split), 0, 0)
+                (int(enforce_prompt_split[0]), 0, 0)
             )  # this will always satisfy
         else:
             program_id = int(enforce_prompt_split[0])
