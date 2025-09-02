@@ -15,7 +15,7 @@ from aiu_fms_testing_utils.testing.validation import (
     top_k_loss_calculator,
 )
 from torch import distributed as dist
-from aiu_fms_testing_utils.utils import sample_sharegpt_requests, warmup_model, stagger_region
+from aiu_fms_testing_utils.utils import sample_sharegpt_requests, warmup_model, stagger_region, sample_granite_3_3_long_answerable_requests
 from transformers import AutoTokenizer
 import json
 import argparse
@@ -66,9 +66,16 @@ parser.add_argument(
     help="path to json file containing the program criteria list",
 )
 parser.add_argument(
-    "--share_gpt_path",
+    "--dataset_path",
     type=str,
-    help="path to share gpt file",
+    help="path to dataset",
+)
+parser.add_argument(
+    "--dataset_type",
+    type=str,
+    choices=["rag_factoid", "sharegpt"],
+    default="sharegpt",
+    help="selects the correct dataset type for sampling. Must be one of rag_factoid or sharegpt"
 )
 parser.add_argument(
     "--test_type",
@@ -117,7 +124,16 @@ args = parser.parse_args()
 # interleave the decodes for programs (not 3 separate generates)
 max_new_tokens = args.max_new_tokens
 model_variant = args.model_variant
-SHARE_GPT_DATASET_PATH = args.share_gpt_path
+DATASET_PATH = args.dataset_path
+
+if args.dataset_type == "rag_factoid":
+    sampler = sample_granite_3_3_long_answerable_requests
+elif args.dataset_type == "sharegpt":
+    sampler = sample_sharegpt_requests
+else:
+    raise ValueError("dataset_type must be one of rag_factoid or sharegpt")
+
+
 USE_DISTRIBUTED = args.distributed
 TIMING = args.timing
 warmed_up = False
@@ -212,8 +228,8 @@ for program_id, min_batch_size, min_prompt_length in programs:
 
 def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     start = time.time()
-    prompts_and_sizes = sample_sharegpt_requests(
-        SHARE_GPT_DATASET_PATH,
+    prompts_and_sizes = sampler(
+        DATASET_PATH,
         batch_size,
         tokenizer,
         32,
