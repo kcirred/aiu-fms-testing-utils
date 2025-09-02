@@ -730,7 +730,7 @@ if "paged" in attn_name:
         ),
     )
     os.environ.setdefault("VLLM_DT_MAX_BATCH_SIZE", str(max(ids.shape[0], 2)))
-    if ("ibm-granite/granite-3.3-8b-instruct" in args.model_path or "ibm-granite/granite-3.3-8b-instruct" in args.model_variant) \
+    if ((args.model_path is not None and "ibm-granite/granite-3.3-8b-instruct" in args.model_path) or (args.variant is not None and "ibm-granite/granite-3.3-8b-instruct" in args.variant)) \
         and args.distributed and dist.get_world_size() == 4:
         extra_generation_kwargs["_kvcache_num_blocks_hint"] = 2080
 
