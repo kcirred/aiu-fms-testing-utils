@@ -455,7 +455,7 @@ def generate(
     return result
 
 
-VLLM_DT_MAX_BATCH_TKV_LIMIT = os.environ.get("VLLM_DT_MAX_BATCH_TKV_LIMIT", 131072)
+VLLM_DT_MAX_BATCH_TKV_LIMIT = int(os.environ.get("VLLM_DT_MAX_BATCH_TKV_LIMIT", 131072))
 
 
 class ProgramCriteria:
