@@ -1,4 +1,5 @@
 import time
+import datetime
 from aiu_fms_testing_utils.utils.paged import ProgramCriteria, get_programs_prompts
 import torch
 import os
@@ -118,6 +119,12 @@ parser.add_argument(
     default=0,
     help="Limit the number of concurrent processes executing the AIU update_lazyhandle phase. Set to 0 to allow all processes",
 )
+parser.add_argument(
+    "--dist_timeout",
+    type=int,
+    default=0,
+    help="Timeout to use for messaging in minutes. Default set by PyTorch dist.init_process_group",
+)
 
 args = parser.parse_args()
 
@@ -209,7 +216,13 @@ else:
 
 distributed_kwargs = {}
 if USE_DISTRIBUTED:
-    dist.init_process_group()
+    if args.dist_timeout > 0:
+        # Default timeout:
+        # https://docs.pytorch.org/docs/stable/distributed.html#torch.distributed.init_process_group
+        dist.init_process_group(timeout=datetime.timedelta(minutes=args.dist_timeout))
+        dprint(f"NOTICE: init_process_group timeout set to {args.dist_timeout} minutes")
+    else:
+        dist.init_process_group()
     aiu_dist_setup(dist.get_rank(), dist.get_world_size())
     distributed_kwargs["distributed_strategy"] = "tp"
     distributed_kwargs["group"] = dist.group.WORLD
