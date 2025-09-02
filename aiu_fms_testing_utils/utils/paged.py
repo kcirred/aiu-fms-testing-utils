@@ -469,7 +469,7 @@ class ProgramCriteria:
         self.tkv_granularity = tkv_granularity
 
     def is_possible(self, batch_size, tkv):
-        return batch_size * tkv <= VLLM_DT_MAX_BATCH_TKV_LIMIT
+        return (batch_size * tkv <= VLLM_DT_MAX_BATCH_TKV_LIMIT) and (batch_size <= self.max_batch) and (tkv <= self.max_tkv)
 
     def calculate_padding(self, batch_size, tkv):
         min_batch_req = (
