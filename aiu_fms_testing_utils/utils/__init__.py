@@ -239,6 +239,11 @@ def _remove_list_from_list(main_list, list_to_remove):
     return main_list
 
 
+# Because we now require encoding the dataset, cache the datasets to make
+# second sample request quick
+__cached_encoded_datasets = {}
+
+
 def __sample_requests(
     prompt_list: List[str],
     num_requests: int,
@@ -250,6 +255,7 @@ def __sample_requests(
     enforce_sizes: List[int] | None = None,
     truncation: bool = False,
     pad_multiple: int = 64,
+    _cached_dataset_key: Optional[str] = None,
 ):
     """
     Shuffles dataset, tokenizes the prompts and then filters.
@@ -262,6 +268,9 @@ def __sample_requests(
             However, if enforce_sizes is not empty, it will set enforce_heteogeneous to False.
         pad_multiple (int): Used only when enforce_heterogeneous is True or enforce_sizes is not empty, asserts that prompt_length would be padded to this multiple
         List[Tuple[str, int]]: a filtered dataset
+        truncation (bool): If true will truncate to an enforced size if the size does not exist. Only to be used with enforce_sizes, otherwise
+        will be ignored
+        _cached_dataset_key (optional[str]): The key to the dataset if enabling caching of encoded datasets
 
     Returns:
         List[Tuple[str, int]]
@@ -303,20 +312,29 @@ def __sample_requests(
             stacklevel=2,
         )
 
-    # Loop to check create filtered dataset
-    for i in range(len(prompt_list)):
-        # Tokenize the prompts and completions.
-        prompt = prompt_list[i]
-        prompt_token_ids = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
+    if (
+        _cached_dataset_key is not None
+        and _cached_dataset_key in __cached_encoded_datasets
+    ):
+        dataset = __cached_encoded_datasets[_cached_dataset_key]
+    else:
+        # Loop to check create filtered dataset
+        for i in range(len(prompt_list)):
+            # Tokenize the prompts and completions.
+            prompt = prompt_list[i]
+            prompt_token_ids = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
 
-        prompt_len = len(prompt_token_ids)
-        if prompt_len < prompt_length_min or prompt_len > prompt_length_max:
-            # Prune too short or too long sequences.
-            continue
+            prompt_len = len(prompt_token_ids)
 
-        dataset.append((prompt, prompt_len))
+            dataset.append((prompt, prompt_len))
 
-    dataset.sort(key=lambda tuple: tuple[1])
+        dataset.sort(key=lambda tuple: tuple[1])
+        __cached_encoded_datasets[_cached_dataset_key] = dataset
+
+    # only keep values that are required
+    dataset = [
+        r for r in dataset if r[1] >= prompt_length_min and r[1] <= prompt_length_max
+    ]
 
     for _, prompt_len in dataset:
         sample_size_counter[get_pad_size(prompt_len)] = (
@@ -472,6 +490,7 @@ def sample_sharegpt_requests(
         enforce_sizes,
         truncation,
         pad_multiple,
+        _cached_dataset_key=dataset_path,
     )
 
 
