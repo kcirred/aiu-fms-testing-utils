@@ -118,6 +118,11 @@ parser.add_argument(
     default=0,
     help="Limit the number of concurrent processes executing the AIU update_lazyhandle phase. Set to 0 to allow all processes",
 )
+parser.add_argument(
+    "--skip_validation",
+    action="store_true",
+    help="set to true to skip cpu validation",
+)
 
 args = parser.parse_args()
 
@@ -132,6 +137,9 @@ elif args.dataset_type == "sharegpt":
     sampler = sample_sharegpt_requests
 else:
     raise ValueError("dataset_type must be one of rag_factoid or sharegpt")
+
+if args.skip_validation and args.test_type == "metrics":
+    dprint("When skipping validation, only test_type=tokens will be done, ignoring test_type=metrics")
 
 
 USE_DISTRIBUTED = args.distributed
@@ -305,16 +313,17 @@ model.compile(backend="sendnn", options={"sendnn.dynamic": True})
 
 __maybe_prepare_fp8_weights(model, is_fp8)
 
-with stagger_region(args.stagger_load):
-    validation_model = get_model(
-        architecture="hf_pretrained",
-        device_type="cpu",
-        data_type=None if is_fp8 else torch.float32,
-        fused_weights=False,
-        **model_path_kwargs,
-        **distributed_kwargs,
-    )
-validation_model.eval()
+if not args.skip_validation:
+    with stagger_region(args.stagger_load):
+        validation_model = get_model(
+            architecture="hf_pretrained",
+            device_type="cpu",
+            data_type=None if is_fp8 else torch.float32,
+            fused_weights=False,
+            **model_path_kwargs,
+            **distributed_kwargs,
+        )
+    validation_model.eval()
 
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
 failed_cases = []
@@ -344,60 +353,94 @@ for program_id, valid_prompt in valid_prompts:  # for each program
             f"program id: {program_id}, valid prompt: {valid_prompt}, input shape: {input_ids.shape}"
         )
 
-    cpu_validation_info = extract_validation_information(
-        validation_model,
-        input_ids,
-        max_new_tokens,
-        LogitsExtractorHook(),
-        attn_algorithm="math",
-        **extra_kwargs,
-    )
-
-    if args.test_type == "metrics":
-        aiu_validation_info = extract_validation_information(
-            model,
+    if not args.skip_validation:
+        cpu_validation_info = extract_validation_information(
+            validation_model,
             input_ids,
             max_new_tokens,
-            GoldenTokenHook(cpu_validation_info.get_info("tokens")),
-            only_last_token=False,
-            timing=TIMING,
+            LogitsExtractorHook(),
+            attn_algorithm="math",
             **extra_kwargs,
         )
 
-        # capture all level 1 metrics
-        level_1_metrics = capture_level_1_metrics(
-            cpu_validation_info.get_info("logits"),
-            aiu_validation_info.get_info("logits"),
-            top_k_loss_calculator(20, __metric_calculator),
-        )
+        if args.test_type == "metrics":
+            aiu_validation_info = extract_validation_information(
+                model,
+                input_ids,
+                max_new_tokens,
+                GoldenTokenHook(cpu_validation_info.get_info("tokens")),
+                only_last_token=False,
+                timing=TIMING,
+                **extra_kwargs,
+            )
 
-        cpu_tokens = cpu_validation_info.get_info("tokens")
+            # capture all level 1 metrics
+            level_1_metrics = capture_level_1_metrics(
+                cpu_validation_info.get_info("logits"),
+                aiu_validation_info.get_info("logits"),
+                top_k_loss_calculator(20, __metric_calculator),
+            )
 
-        for sentence_idx, token_idx, metrics_value in level_1_metrics:
+            cpu_tokens = cpu_validation_info.get_info("tokens")
+
+            for sentence_idx, token_idx, metrics_value in level_1_metrics:
+                if local_rank == 0:
+                    aiu_token = torch.argmax(
+                        aiu_validation_info.get_info("logits")[sentence_idx][token_idx],
+                        dim=-1,
+                    )
+                    cpu_token = cpu_tokens[sentence_idx][valid_prompt[1] + token_idx]
+                    aiu_str = tokenizer.decode(aiu_token).replace(
+                        "\n", "<NEWLINE>"
+                    )  # remove newlines for readability
+                    cpu_str = tokenizer.decode(cpu_token).replace(
+                        "\n", "<NEWLINE>"
+                    )  # remove newlines for readability
+                    dprint(
+                        f'For Program {program_id} in sentence {sentence_idx + 1}: the metric for token {token_idx} is {metrics_value}, AIU ID="{aiu_token.item()}" | STR="{aiu_str}" -- CPU ID="{cpu_token.item()}" | CPU STR="{cpu_str}"'
+                    )
+
+            ce_fail_responses = filter_failed_level_1_cases(
+                level_1_metrics, lambda m: m[0] >= args.cross_entropy_threshold
+            )
+            failure_rate = len(ce_fail_responses) / len(level_1_metrics)
+            if failure_rate >= args.failure_rate_threshold:
+                failed_cases.append((program_id, valid_prompt, failure_rate))
+
+        elif args.test_type == "tokens":
+            aiu_validation_info = extract_validation_information(
+                model,
+                input_ids,
+                max_new_tokens,
+                None,
+                only_last_token=False,
+                timing=TIMING,
+                **extra_kwargs,
+            )
+
             if local_rank == 0:
-                aiu_token = torch.argmax(
-                    aiu_validation_info.get_info("logits")[sentence_idx][token_idx],
-                    dim=-1,
-                )
-                cpu_token = cpu_tokens[sentence_idx][valid_prompt[1] + token_idx]
-                aiu_str = tokenizer.decode(aiu_token).replace(
-                    "\n", "<NEWLINE>"
-                )  # remove newlines for readability
-                cpu_str = tokenizer.decode(cpu_token).replace(
-                    "\n", "<NEWLINE>"
-                )  # remove newlines for readability
-                dprint(
-                    f'For Program {program_id} in sentence {sentence_idx + 1}: the metric for token {token_idx} is {metrics_value}, AIU ID="{aiu_token.item()}" | STR="{aiu_str}" -- CPU ID="{cpu_token.item()}" | CPU STR="{cpu_str}"'
-                )
-
-        ce_fail_responses = filter_failed_level_1_cases(
-            level_1_metrics, lambda m: m[0] >= args.cross_entropy_threshold
-        )
-        failure_rate = len(ce_fail_responses) / len(level_1_metrics)
-        if failure_rate >= args.failure_rate_threshold:
-            failed_cases.append((program_id, valid_prompt, failure_rate))
-
-    elif args.test_type == "tokens":
+                for sentence_idx, (reference_sentence, test_sentence) in enumerate(
+                    zip(
+                        cpu_validation_info.get_info("tokens"),
+                        aiu_validation_info.get_info("tokens"),
+                    )
+                ):
+                    tokens_prompt = [t.item() for t in reference_sentence[:-max_new_tokens]]
+                    cpu_tokens_generated = [
+                        t.item() for t in reference_sentence[-max_new_tokens:]
+                    ]
+                    aiu_tokens_generated = [
+                        t.item() for t in test_sentence[-max_new_tokens:]
+                    ]
+                    dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
+                    dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt)}")
+                    dprint(f"CPU tokens:\n{cpu_tokens_generated}")
+                    dprint(f"AIU tokens:\n{aiu_tokens_generated}")
+                    dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens_generated)}")
+                    dprint(f"AIU output:\n{tokenizer.decode(aiu_tokens_generated)}")
+        else:
+            raise ValueError("test type must be one of metrics or tokens")
+    else:
         aiu_validation_info = extract_validation_information(
             model,
             input_ids,
@@ -409,29 +452,17 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         )
 
         if local_rank == 0:
-            for sentence_idx, (reference_sentence, test_sentence) in enumerate(
-                zip(
-                    cpu_validation_info.get_info("tokens"),
-                    aiu_validation_info.get_info("tokens"),
-                )
-            ):
+            for sentence_idx, test_sentence in enumerate(aiu_validation_info.get_info("tokens")):
                 tokens_prompt = [t.item() for t in reference_sentence[:-max_new_tokens]]
-                cpu_tokens_generated = [
-                    t.item() for t in reference_sentence[-max_new_tokens:]
-                ]
                 aiu_tokens_generated = [
                     t.item() for t in test_sentence[-max_new_tokens:]
                 ]
                 dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
                 dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt)}")
-                dprint(f"CPU tokens:\n{cpu_tokens_generated}")
                 dprint(f"AIU tokens:\n{aiu_tokens_generated}")
-                dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens_generated)}")
                 dprint(f"AIU output:\n{tokenizer.decode(aiu_tokens_generated)}")
-    else:
-        raise ValueError("test type must be one of metrics or tokens")
 
-if local_rank == 0:
+if not args.skip_validation and local_rank == 0:
     if len(failed_cases) != 0:
         dprint("the test failed with the following cases:")
         for failed_case in failed_cases:
