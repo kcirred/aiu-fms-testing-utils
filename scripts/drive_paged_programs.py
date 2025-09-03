@@ -1,4 +1,5 @@
 import time
+import datetime
 from aiu_fms_testing_utils.utils.paged import ProgramCriteria, get_programs_prompts
 import torch
 import os
@@ -118,6 +119,12 @@ parser.add_argument(
     default=0,
     help="Limit the number of concurrent processes executing the AIU update_lazyhandle phase. Set to 0 to allow all processes",
 )
+parser.add_argument(
+    "--dist_timeout",
+    type=int,
+    default=0,
+    help="Timeout to use for messaging in minutes. Default set by PyTorch dist.init_process_group",
+)
 
 args = parser.parse_args()
 
@@ -136,7 +143,6 @@ else:
 
 USE_DISTRIBUTED = args.distributed
 TIMING = args.timing
-warmed_up = False
 is_fp8 = "fp8" in args.attention_type
 
 attention_map = {
@@ -147,40 +153,10 @@ attention_map = {
 }
 ATTN_NAME = attention_map[args.attention_type]
 
-with open(args.program_criteria_json_path, "r") as f:
-    program_criteria_json_list = json.load(f)["programs"]
-    program_criteria_list = []
-    for i, d in enumerate(program_criteria_json_list):
-        program_criteria_list.append(
-            ProgramCriteria(
-                i,
-                d["max_batch"],
-                d["max_tkv"],
-                d["batch_granularity"],
-                d["tkv_granularity"],
-            )
-        )
-
-    programs = []
-    for program_str in args.programs:
-        enforce_prompt_split = program_str.split(":")
-        if len(enforce_prompt_split) == 1:
-            programs.append(
-                (int(enforce_prompt_split), 0, 0)
-            )  # this will always satisfy
-        else:
-            program_id = int(enforce_prompt_split[0])
-            enforce_batch_size, enforce_prompt_length = (
-                int(_) for _ in enforce_prompt_split[1].split(",")
-            )
-            programs.append((program_id, enforce_batch_size, enforce_prompt_length))
-
-    if len(programs) == 0:
-        programs = [(p.program_id, 0, 0) for p in program_criteria_list]
-
 torch.manual_seed(42)
 torch.set_grad_enabled(False)
 os.environ["COMPILATION_MODE"] = "offline_decoder"
+os.environ["DT_PROG_CRITERIA_FILEPATH"] = args.program_criteria_json_path
 if (
     "VLLM_DT_MAX_CONTEXT_LEN" not in os.environ
     or "VLLM_DT_MAX_BATCH_SIZE" not in os.environ
@@ -193,37 +169,6 @@ if (
 
 max_batch_size = int(os.environ["VLLM_DT_MAX_BATCH_SIZE"])
 max_tkv = int(os.environ["VLLM_DT_MAX_CONTEXT_LEN"])
-
-# FIXME: filter condition for this on prompt and batch
-program_map = get_programs_prompts(
-    program_criteria_list,
-    multiple=64,
-    max_batch_size=max_batch_size,
-    max_tkv=max_tkv,
-    program_cycles=max_new_tokens,
-)
-for v in program_map.values():
-    random.Random(42).shuffle(v)
-
-# select prompts that fit the batch size criteria
-valid_prompts = []
-for program_id, min_batch_size, min_prompt_length in programs:
-    found_valid_prompt = False
-    for valid_prompt_shape in program_map[(program_criteria_list[program_id],)]:
-        # make sure the criteria for min batch and min prompt is satisfied
-        if (
-            valid_prompt_shape[0] >= min_batch_size
-            and valid_prompt_shape[1] >= min_prompt_length
-        ):
-            valid_prompts.append((program_id, valid_prompt_shape))
-            found_valid_prompt = True
-            break
-
-    if not found_valid_prompt:
-        if local_rank == 0:
-            dprint(
-                f"no valid prompt shape was found which would result in program {program_id} that satisfied min_batch={min_batch_size} and min_prompt_length={min_prompt_length}"
-            )
 
 
 def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
@@ -263,20 +208,6 @@ def __maybe_prepare_fp8_weights(model_in, is_fp8):
                 param.data = param.data.to(dtype=torch.float16)
 
 
-# metric calculator based on the cross-entropy and mean diff for each decode step
-def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
-    cross_entropy = torch.nn.CrossEntropyLoss()(
-        r, t.softmax(dim=1).to(dtype=torch.float32)
-    )
-    diff = torch.mean(
-        torch.abs(
-            r.softmax(dim=1).to(dtype=torch.float32)
-            - t.softmax(dim=1).to(dtype=torch.float32)
-        )
-    )
-    return (cross_entropy, diff)
-
-
 model_path_kwargs = {}
 if os.path.exists(model_variant):
     model_path_kwargs = {"model_path": model_variant}
@@ -285,7 +216,13 @@ else:
 
 distributed_kwargs = {}
 if USE_DISTRIBUTED:
-    dist.init_process_group()
+    if args.dist_timeout > 0:
+        # Default timeout:
+        # https://docs.pytorch.org/docs/stable/distributed.html#torch.distributed.init_process_group
+        dist.init_process_group(timeout=datetime.timedelta(minutes=args.dist_timeout))
+        dprint(f"NOTICE: init_process_group timeout set to {args.dist_timeout} minutes")
+    else:
+        dist.init_process_group()
     aiu_dist_setup(dist.get_rank(), dist.get_world_size())
     distributed_kwargs["distributed_strategy"] = "tp"
     distributed_kwargs["group"] = dist.group.WORLD
@@ -317,6 +254,101 @@ with stagger_region(args.stagger_load):
 validation_model.eval()
 
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
+
+# warmup with any input so compiler produces criteria json
+input_ids, extra_kwargs = __prepare_inputs(
+    2, 64, tokenizer
+)
+extra_kwargs["attn_name"] = ATTN_NAME
+if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
+    extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+warmup_model(
+    model,
+    input_ids,
+    max_new_tokens=max_new_tokens,
+    compile_dynamic_sendnn=True,
+    stagger_update_lazyhandle=args.stagger_update_lazyhandle,
+    **extra_kwargs,
+)
+
+with open(args.program_criteria_json_path, "r") as f:
+    program_criteria_json_list = json.load(f)["programs"]
+    program_criteria_list = []
+    for i, d in enumerate(program_criteria_json_list):
+        program_criteria_list.append(
+            ProgramCriteria(
+                i,
+                d["max_batch"],
+                d["max_tkv"],
+                d["batch_granularity"],
+                d["tkv_granularity"],
+            )
+        )
+
+    programs = []
+    for program_str in args.programs:
+        enforce_prompt_split = program_str.split(":")
+        if len(enforce_prompt_split) == 1:
+            programs.append(
+                (int(enforce_prompt_split[0]), 0, 0)
+            )  # this will always satisfy
+        else:
+            program_id = int(enforce_prompt_split[0])
+            enforce_batch_size, enforce_prompt_length = (
+                int(_) for _ in enforce_prompt_split[1].split(",")
+            )
+            programs.append((program_id, enforce_batch_size, enforce_prompt_length))
+
+    if len(programs) == 0:
+        programs = [(p.program_id, 0, 0) for p in program_criteria_list]
+
+
+# FIXME: filter condition for this on prompt and batch
+program_map = get_programs_prompts(
+    program_criteria_list,
+    multiple=64,
+    max_batch_size=max_batch_size,
+    max_tkv=max_tkv,
+    program_cycles=max_new_tokens,
+)
+for v in program_map.values():
+    random.Random(42).shuffle(v)
+
+# select prompts that fit the batch size criteria
+valid_prompts = []
+for program_id, min_batch_size, min_prompt_length in programs:
+    found_valid_prompt = False
+    for valid_prompt_shape in program_map[(program_criteria_list[program_id],)]:
+        # make sure the criteria for min batch and min prompt is satisfied
+        if (
+            valid_prompt_shape[0] >= min_batch_size
+            and valid_prompt_shape[1] >= min_prompt_length
+        ):
+            valid_prompts.append((program_id, valid_prompt_shape))
+            found_valid_prompt = True
+            break
+
+    if not found_valid_prompt:
+        if local_rank == 0:
+            dprint(
+                f"no valid prompt shape was found which would result in program {program_id} that satisfied min_batch={min_batch_size} and min_prompt_length={min_prompt_length}"
+            )
+
+
+# metric calculator based on the cross-entropy and mean diff for each decode step
+def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
+    cross_entropy = torch.nn.CrossEntropyLoss()(
+        r, t.softmax(dim=1).to(dtype=torch.float32)
+    )
+    diff = torch.mean(
+        torch.abs(
+            r.softmax(dim=1).to(dtype=torch.float32)
+            - t.softmax(dim=1).to(dtype=torch.float32)
+        )
+    )
+    return (cross_entropy, diff)
+
+
 failed_cases = []
 for program_id, valid_prompt in valid_prompts:  # for each program
     input_ids, extra_kwargs = __prepare_inputs(
@@ -325,18 +357,6 @@ for program_id, valid_prompt in valid_prompts:  # for each program
     extra_kwargs["attn_name"] = ATTN_NAME
     if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
         extra_kwargs["_kvcache_num_blocks_hint"] = 2080
-    
-    # warmup aiu model
-    if not warmed_up:
-        warmup_model(
-            model,
-            input_ids,
-            max_new_tokens=max_new_tokens,
-            compile_dynamic_sendnn=True,
-            stagger_update_lazyhandle=args.stagger_update_lazyhandle,
-            **extra_kwargs,
-        )
-        warmed_up = True
 
     if local_rank == 0:
         dprint(f"*** testing program {program_id} ***")
