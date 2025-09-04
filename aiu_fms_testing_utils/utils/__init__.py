@@ -190,7 +190,7 @@ def _get_truncation_size(
     """
     truncation_list: List[Tuple[int, int]] = []
     sorted_sizes_in_dataset: List[int] = sorted(dataset_size_and_count.keys())
-    # sort for consistant results where user mixes order of enforce_sizes
+    # sort for consistent results where user mixes order of enforce_sizes
     enforce_sizes = sorted(enforce_sizes)
 
     for size_to_enforce in enforce_sizes:
@@ -239,6 +239,11 @@ def _remove_list_from_list(main_list, list_to_remove):
 
 __cached_encoded_datasets = {}
 
+# Because we now require encoding the dataset, cache the datasets to make
+# second sample request quick
+__cached_encoded_datasets = {}
+
+
 def __sample_requests(
     prompt_list: List[str],
     num_requests: int,
@@ -247,26 +252,42 @@ def __sample_requests(
     prompt_length_max: int = 64,
     seed: Optional[int] = None,
     enforce_heterogeneous: bool = False,
-    enforce_sizes: List[int] = [],
+    enforce_sizes: List[int] | None = None,
     truncation: bool = False,
     pad_multiple: int = 64,
-    _cached_dataset_key: Optional[str] = None
+    _cached_dataset_key: Optional[str] = None,
 ):
     """
-    Shuffles dataset, tokenizes the prompts and then filters
+    Shuffles dataset, tokenizes the prompts and then filters.
 
     Args:
         prompt_length_min (int): filters out prompts shorter than this value.
         prompt_length_max (int): filters out prompts larger than this value.
         enforce_sizes (List[int]): sample request will grab a prompt with this length if available.
-        enforce_heterogeneous (bool): Pads all prompts within batch size to nearest multiple of 64.
+        enforce_heterogeneous (bool): Pads all prompts within batch to nearest multiple of `pad_multiple`.
+            However, if enforce_sizes is not empty, it will set enforce_heteogeneous to False.
         pad_multiple (int): Used only when enforce_heterogeneous is True or enforce_sizes is not empty, asserts that prompt_length would be padded to this multiple
         List[Tuple[str, int]]: a filtered dataset
+        truncation (bool): If true will truncate to an enforced size if the size does not exist. Only to be used with enforce_sizes, otherwise
+        will be ignored
+        _cached_dataset_key (optional[str]): The key to the dataset if enabling caching of encoded datasets
+
+    Returns:
+        List[Tuple[str, int]]
     """
 
     assert prompt_length_max >= prompt_length_min, (
         "Please enter valid prompt length max/min values"
     )
+
+    if enforce_sizes is None:
+        enforce_sizes = []
+
+    if enforce_heterogeneous and enforce_sizes:
+        warnings.warn(
+            f"{enforce_heterogeneous=} and {enforce_sizes=}, these two are not designed to be used at the same time. Forcing enforce_heterogeneous to False"
+        )
+        enforce_heterogeneous = False
 
     # Based on min/max prompt length, one can back out the number of possible heterogeneous values
     max_heterogeneous_combinations = (prompt_length_max // pad_multiple) - (
@@ -291,7 +312,10 @@ def __sample_requests(
             stacklevel=2,
         )
 
-    if _cached_dataset_key is not None and _cached_dataset_key in __cached_encoded_datasets:
+    if (
+        _cached_dataset_key is not None
+        and _cached_dataset_key in __cached_encoded_datasets
+    ):
         dataset = __cached_encoded_datasets[_cached_dataset_key]
     else:
         # Loop to check create filtered dataset
@@ -306,13 +330,17 @@ def __sample_requests(
 
         dataset.sort(key=lambda tuple: tuple[1])
         __cached_encoded_datasets[_cached_dataset_key] = dataset
-    
-    # only keep values that are required
-    dataset = [r for r in dataset if r[1] >= prompt_length_min and r[1] <= prompt_length_max]
 
+    # only keep values that are required
+    dataset = [
+        r for r in dataset if r[1] >= prompt_length_min and r[1] <= prompt_length_max
+    ]
+
+    pad_size_dict: dict[int, int] = {}
     for _, prompt_len in dataset:
-        sample_size_counter[get_pad_size(prompt_len)] = (
-            sample_size_counter.get(get_pad_size(prompt_len), 0) + 1
+        pad_size_dict.setdefault(prompt_len, get_pad_size(prompt_len, pad_multiple))
+        sample_size_counter[pad_size_dict[prompt_len]] = (
+            sample_size_counter.get(pad_size_dict[prompt_len], 0) + 1
         )
 
     if enforce_sizes:
@@ -353,26 +381,21 @@ def __sample_requests(
         if len(filtered_dataset) == num_requests and not enforce_sizes:
             break
 
-        # This section is for enforce heterogeneous
+        # NOTE: This section is for enforce heterogeneous, does not work with enforce_sizes
         if (
             enforce_heterogeneous
             and max_heterogeneous_combinations > len(filtered_dataset)
             and len(filtered_dataset) < num_requests
         ):
             # for _, size in filtered_dataset:
-            current_padded_size = get_pad_size(prompt_len, pad_multiple)
-
-            # If it's in the list of enforce_sizes it is enforced, can remove from list
-            if current_padded_size in enforce_sizes:
-                enforce_sizes.remove(current_padded_size)
-                enforced_dataset.append((prompt, prompt_len))
+            current_padded_size = pad_size_dict[prompt_len]
 
             if current_padded_size not in seen_sizes:
                 filtered_dataset.append((prompt, prompt_len))
                 seen_sizes.append(current_padded_size)
         # Forcing search for enforce_sizes
         elif enforce_sizes or enforce_sizes_with_truncation:
-            current_padded_size = get_pad_size(prompt_len, pad_multiple)
+            current_padded_size = pad_size_dict[prompt_len]
             # if it is in the enforce_size list
             if current_padded_size in enforce_sizes:
                 enforce_sizes.remove(current_padded_size)
@@ -479,7 +502,7 @@ def sample_sharegpt_requests(
     prompt_length_max: int = 64,
     seed: Optional[int] = None,
     enforce_heterogeneous: bool = False,
-    enforce_sizes: List[int] = [],
+    enforce_sizes: List[int] | None = None,
     truncation: bool = False,
     pad_multiple: int = 64,
 ) -> List[Tuple[str, int]]:
@@ -489,6 +512,9 @@ def sample_sharegpt_requests(
             "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json",
             dataset_path,
         )
+
+    if enforce_sizes is None:
+        enforce_sizes = []
 
     # Load the dataset.
     with open(dataset_path, encoding="utf-8") as f:
@@ -508,7 +534,7 @@ def sample_sharegpt_requests(
         enforce_sizes,
         truncation,
         pad_multiple,
-        _cached_dataset_key=dataset_path
+        _cached_dataset_key=dataset_path,
     )
 
 
@@ -520,11 +546,14 @@ def sample_squad_v2_qa_requests(
     prompt_length_max: int = 64,
     seed: Optional[int] = None,
     enforce_heterogeneous: bool = False,
-    enforce_sizes: List[int] = [],
+    enforce_sizes: List[int] | None = None,
     truncation: bool = False,
     pad_multiple: int = 64,
 ) -> List[Tuple[str, int]]:
     from datasets import load_dataset
+
+    if enforce_sizes is None:
+        enforce_sizes = []
 
     if os.path.exists(dataset_path):
         ds = load_dataset(dataset_path)["train"]
