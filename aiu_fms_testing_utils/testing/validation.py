@@ -3,6 +3,7 @@ from typing import List, Tuple, Callable, MutableMapping, Any, Optional
 
 import torch
 from aiu_fms_testing_utils.utils.aiu_setup import dprint
+from aiu_fms_testing_utils._version import version_tuple
 import os
 
 
@@ -130,8 +131,22 @@ def get_default_validation_prefix(
     seq_length: int,
     dtype: str,
     attn_type: str,
+    aftu_version: str,
 ):
-    return f"{model_id.replace('/', '--')}_max-new-tokens-{max_new_tokens}_batch-size-{batch_size}_seq-length-{seq_length}_dtype-{dtype}_attn-type-{attn_type}"
+    """
+    Args:
+        model_id (str): model name used
+        max_new_tokens (int): number of max new tokens to generate
+        batch_size (int): batch size used
+        seq_length (int):sequence length used
+        dtype (str): data type
+        attn_type (str): type of attention
+        aftu_version (str): introduced in v0.3.0 to track changed in log
+
+    Returns:
+        str: A prefix that will be prepended to the file name
+    """
+    return f"{model_id.replace('/', '--')}_max-new-tokens-{max_new_tokens}_batch-size-{batch_size}_seq-length-{seq_length}_dtype-{dtype}_attn-type-{attn_type}.{aftu_version}"
 
 
 def load_validation_information(
@@ -246,7 +261,7 @@ def extract_validation_information(
     **extra_kwargs,
 ):
     attention_specific_kwargs = {}
-    if "paged" in extra_kwargs["attn_name"]:
+    if "paged" in extra_kwargs.get("attn_name", "sdpa"):
         from aiu_fms_testing_utils.utils.paged import generate
     else:
         # TODO: Add a unified generation dependent on attn_type
@@ -388,3 +403,87 @@ def print_failed_cases(failed_cases, aiu_tokens, validation_tokens, tokenizer):
         print(
             f"In sentence {sentence_index + 1}/{len(aiu_tokens)}, token {token_index}, AIU outputs {aiu_token} instead of {validation_token} -- AIU val={aiu_str} -- CPU val={validation_str}"
         )
+
+
+def get_validation_info_path(
+    validation_info_dir: str,
+    model_variant: str,
+    batch_size: int,
+    seq_length: int,
+    max_new_tokens: int,
+    seed: int,
+    attn_type: str,
+    aftu_version: Optional[Tuple[int, int, int]] = None,
+    device_type: str = "cpu",
+    dtype: str = "fp16",
+):
+    if aftu_version is None:
+        aftu_version = version_tuple
+
+    validation_file_name = f"{get_default_validation_prefix(model_variant, max_new_tokens, batch_size, seq_length, dtype, attn_type, '.'.join([str(_) for _ in aftu_version[:3]]))}.{device_type}_validation_info.{seed}.out"
+    full_path = os.path.join(validation_info_dir, validation_file_name)
+    return full_path
+
+
+def __decrement_version(version: Tuple[int, int, int]):
+    """
+    Function designed to prevent triple nested for loop while decrementing version
+    """
+    major, minor, patch = version
+    if patch > 0:
+        return (major, minor, patch - 1)
+    elif minor > 0:
+        return (major, minor - 1, 0)
+    elif major > 0:
+        return (major - 1, 0, 0)
+    else:
+        return None
+
+
+def find_validation_info_path(
+    validation_info_dir: str,
+    model_variant: str,
+    batch_size: int,
+    seq_length: int,
+    max_new_tokens: int,
+    seed: int,
+    attn_type: str,
+    aftu_version: Optional[Tuple[int, int, int]] = None,
+    version_allow_decrement: bool = False,
+    device_type: str = "cpu",
+    dtype: str = "fp16",
+):
+    """
+    Find the validation info path if it exists, otherwise return None
+    """
+
+    if aftu_version is None:
+        loc_version_tuple = version_tuple[:3]
+    else:
+        loc_version_tuple = aftu_version
+
+    result_path: Optional[str] = None
+
+    while result_path is None and loc_version_tuple is not None:
+        full_path = get_validation_info_path(
+            validation_info_dir,
+            model_variant,
+            batch_size,
+            seq_length,
+            max_new_tokens,
+            seed,
+            attn_type,
+            loc_version_tuple,
+            device_type,
+            dtype,
+        )
+        # if the path is found, we are done searching and can return
+        if os.path.exists(full_path):
+            result_path = full_path
+        # if allow version decrements, decrement the version and continue
+        elif version_allow_decrement:
+            loc_version_tuple = __decrement_version(loc_version_tuple)
+        # if path is not found and we are not allowing decrementing of version, finish with no result
+        else:
+            loc_version_tuple = None
+    return result_path
