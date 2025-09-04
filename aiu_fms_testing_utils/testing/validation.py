@@ -3,8 +3,8 @@ from typing import List, Tuple, Callable, MutableMapping, Any, Optional
 
 import torch
 from aiu_fms_testing_utils.utils.aiu_setup import dprint
-import os
 from aiu_fms_testing_utils._version import version_tuple
+import os
 
 
 class LogitsExtractorHook(
@@ -261,7 +261,7 @@ def extract_validation_information(
     **extra_kwargs,
 ):
     attention_specific_kwargs = {}
-    if "paged" in extra_kwargs["attn_name"]:
+    if "paged" in extra_kwargs.get("attn_name", "sdpa"):
         from aiu_fms_testing_utils.utils.paged import generate
     else:
         # TODO: Add a unified generation dependent on attn_type

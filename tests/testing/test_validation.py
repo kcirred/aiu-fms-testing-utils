@@ -11,8 +11,8 @@ from aiu_fms_testing_utils.testing.validation import (
 from aiu_fms_testing_utils._version import version_tuple
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
-import torch
 from pathlib import Path
+import torch
 
 
 @pytest.mark.parametrize(
