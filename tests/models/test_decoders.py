@@ -378,6 +378,7 @@ def __load_validation_info(
     else:
         return None
 
+
 class PersistentModel:
     """This class will either get a model that is pre-compiled (if compile_dynamic_sendnn) or re-create the model for each test"""
 
