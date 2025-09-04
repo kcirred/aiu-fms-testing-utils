@@ -1,14 +1,18 @@
+import re
 import tempfile
 import pytest
 from aiu_fms_testing_utils.testing.validation import (
     LogitsExtractorHook,
     extract_validation_information,
     load_validation_information,
+    get_validation_info_path,
+    find_validation_info_path
 )
+from aiu_fms_testing_utils._version import version_tuple
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
 import torch
-
+from pathlib import Path
 
 @pytest.mark.parametrize(
     "validation_type,post_iteration_hook",
@@ -64,3 +68,40 @@ def test_validation_info_round_trip(validation_type, post_iteration_hook):
             assert gen_vi_no_none.keys() == loaded_vi_no_none.keys()
             for k in gen_vi_no_none.keys():
                 torch.testing.assert_close(gen_vi_no_none[k], loaded_vi_no_none[k])
+
+
+def test_get_validation_info_path(tmp_path):
+    assert get_validation_info_path(tmp_path, "ibm-granite/granite-3.3-8b-instruct", 4, 64, 128, 0, "sdpa") == f"{tmp_path}/ibm-granite--granite-3.3-8b-instruct_max-new-tokens-128_batch-size-4_seq-length-64_dtype-fp16_attn-type-sdpa.{".".join([str(_) for _ in version_tuple[:3]])}.cpu_validation_info.0.out"
+    assert get_validation_info_path(tmp_path, "ibm-granite/granite-3.3-8b-instruct", 4, 64, 128, 0, "sdpa", aftu_version=(1, 2, 3)) == f"{tmp_path}/ibm-granite--granite-3.3-8b-instruct_max-new-tokens-128_batch-size-4_seq-length-64_dtype-fp16_attn-type-sdpa.1.2.3.cpu_validation_info.0.out"
+
+@pytest.mark.parametrize("current_version,save_version,expected_version,version_allow_decrement", [
+    (None, version_tuple[:3], version_tuple[:3], True), # saved version is the same version as current - find
+    ((1, 1, 1), (1, 1, 2), None, True), # current version is less than any saved version -- dont find - micro
+    ((0, 0, 3), (0, 1, 2), None, True), # current version is less than any saved version -- dont find - minor
+    ((0, 2, 3), (1, 1, 2), None, True), # current version is less than any saved version -- dont find - major
+    ((1, 1, 2), (1, 1, 1), (1, 1, 1), True), # current version is greater than saved version -- find saved version - micro
+    ((1, 1, 2), (1, 1, 0), (1, 1, 0), True), # current version is greater than saved version -- find saved version - minor
+    ((1, 1, 2), (1, 0, 0), (1, 0, 0), True), # current version is greater than saved version -- find saved version - major
+    ((1, 1, 2), (1, 1, 1), None, False), # current version is greater than saved version -- dont find - micro - no decrement
+    ((1, 1, 2), (1, 1, 0), None, False), # current version is greater than saved version -- dont find - minor - no decrement
+    ((1, 1, 2), (1, 0, 0), None, False), # current version is greater than saved version -- dont find - major - no decrement
+])
+def test_find_validation_info_path(current_version, save_version, expected_version, version_allow_decrement, tmp_path):
+    # create a large version path to make sure we never choose it
+    large_version_path = Path(get_validation_info_path(tmp_path, "ibm-granite/granite-3.3-8b-instruct", 4, 64, 128, 0, "sdpa", (10, 10, 10)))
+    large_version_path.write_text("test")
+    assert large_version_path.exists()
+
+    save_path = Path(get_validation_info_path(tmp_path, "ibm-granite/granite-3.3-8b-instruct", 4, 64, 128, 0, "sdpa", save_version))
+    save_path.write_text("test")
+    assert save_path.exists()
+
+    found_path = find_validation_info_path(tmp_path, "ibm-granite/granite-3.3-8b-instruct", 4, 64, 128, 0, "sdpa", current_version, version_allow_decrement=version_allow_decrement)
+
+    if expected_version is None:
+        assert found_path is None
+    else:
+        match = re.search(r'(\d+)\.(\d+)\.(\d+)', found_path)
+        found_version = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        assert found_version == expected_version
+

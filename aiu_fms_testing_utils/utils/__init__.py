@@ -18,7 +18,6 @@ import math
 import contextlib
 import warnings
 
-
 @contextlib.contextmanager
 def stagger_region(limit: int):
     """
