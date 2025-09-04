@@ -4,8 +4,6 @@ import pytest
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
 import itertools
-import warnings
-import re
 import torch
 from torch import distributed as dist
 from aiu_fms_testing_utils.testing.validation import (
@@ -18,18 +16,16 @@ from aiu_fms_testing_utils.testing.validation import (
     load_validation_information,
     validate_level_0,
     top_k_loss_calculator,
-    find_validation_info_path
+    find_validation_info_path,
 )
 from aiu_fms_testing_utils.utils import (
     warmup_model,
     sample_sharegpt_requests,
 )
-from typing import Tuple
 import json
 from transformers import AutoTokenizer
 
 from aiu_fms_testing_utils.utils.aiu_setup import dprint, aiu_dist_setup
-from aiu_fms_testing_utils._version import version
 
 import os
 
@@ -365,12 +361,20 @@ def __load_validation_info(
     model_path, batch_size, seq_length, max_new_tokens, tokenizer, seed, attn_type: str
 ):
     # if path doesn't exist and paged isn't in the attention name, remove `attn_type` and recheck again, warn that we will no longer in the future have paths without 'attn_type'
-    full_path = find_validation_info_path(validation_info_dir, model_path, batch_size, seq_length, max_new_tokens, seed, attn_type, version_allow_decrement=True, dtype=CPU_DTYPE)
+    full_path = find_validation_info_path(
+        validation_info_dir,
+        model_path,
+        batch_size,
+        seq_length,
+        max_new_tokens,
+        seed,
+        attn_type,
+        version_allow_decrement=True,
+        dtype=CPU_DTYPE,
+    )
     if full_path is not None:
         dprint(f"cpu validation info found for seed={seed} -- loading it")
-        return load_validation_information(
-            full_path, "logits", batch_size, tokenizer
-        )
+        return load_validation_information(full_path, "logits", batch_size, tokenizer)
     else:
         return None
 
@@ -547,7 +551,14 @@ def test_common_shapes(
         if save_validation_info_outputs:
             cpu_validation_info.save(
                 get_validation_info_path(
-                    validation_info_dir, model_path, batch_size, seq_length, max_new_tokens, 0, ATTN_NAME, dtype=CPU_DTYPE
+                    validation_info_dir,
+                    model_path,
+                    batch_size,
+                    seq_length,
+                    max_new_tokens,
+                    0,
+                    ATTN_NAME,
+                    dtype=CPU_DTYPE,
                 )
             )
     cpu_static_tokens = cpu_validation_info.get_info("tokens")
@@ -640,7 +651,7 @@ def test_common_shapes(
                                 max_new_tokens,
                                 i,
                                 ATTN_NAME,
-                                dtype=CPU_DTYPE
+                                dtype=CPU_DTYPE,
                             )
                         )
                 cpu_static_tokens = cpu_validation_info.get_info("tokens")

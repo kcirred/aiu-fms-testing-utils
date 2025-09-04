@@ -404,6 +404,7 @@ def print_failed_cases(failed_cases, aiu_tokens, validation_tokens, tokenizer):
             f"In sentence {sentence_index + 1}/{len(aiu_tokens)}, token {token_index}, AIU outputs {aiu_token} instead of {validation_token} -- AIU val={aiu_str} -- CPU val={validation_str}"
         )
 
+
 def get_validation_info_path(
     validation_info_dir: str,
     model_variant: str,
@@ -412,16 +413,17 @@ def get_validation_info_path(
     max_new_tokens: int,
     seed: int,
     attn_type: str,
-    aftu_version: Optional[Tuple[int,int,int]] = None,
+    aftu_version: Optional[Tuple[int, int, int]] = None,
     device_type: str = "cpu",
     dtype: str = "fp16",
 ):
     if aftu_version is None:
         aftu_version = version_tuple
 
-    validation_file_name = f"{get_default_validation_prefix(model_variant, max_new_tokens, batch_size, seq_length, dtype, attn_type, ".".join([str(_) for _ in aftu_version[:3]]))}.{device_type}_validation_info.{seed}.out"
+    validation_file_name = f"{get_default_validation_prefix(model_variant, max_new_tokens, batch_size, seq_length, dtype, attn_type, '.'.join([str(_) for _ in aftu_version[:3]]))}.{device_type}_validation_info.{seed}.out"
     full_path = os.path.join(validation_info_dir, validation_file_name)
     return full_path
+
 
 def __decrement_version(version: Tuple[int, int, int]):
     """
@@ -437,6 +439,7 @@ def __decrement_version(version: Tuple[int, int, int]):
     else:
         return None
 
+
 def find_validation_info_path(
     validation_info_dir: str,
     model_variant: str,
@@ -445,7 +448,7 @@ def find_validation_info_path(
     max_new_tokens: int,
     seed: int,
     attn_type: str,
-    aftu_version: Optional[Tuple[int,int,int]] = None,
+    aftu_version: Optional[Tuple[int, int, int]] = None,
     version_allow_decrement: bool = False,
     device_type: str = "cpu",
     dtype: str = "fp16",
@@ -458,11 +461,22 @@ def find_validation_info_path(
         loc_version_tuple = version_tuple[:3]
     else:
         loc_version_tuple = aftu_version
-    
+
     result_path: Optional[str] = None
-    
+
     while result_path is None and loc_version_tuple is not None:
-        full_path = get_validation_info_path(validation_info_dir, model_variant, batch_size, seq_length, max_new_tokens, seed, attn_type, loc_version_tuple, device_type, dtype)
+        full_path = get_validation_info_path(
+            validation_info_dir,
+            model_variant,
+            batch_size,
+            seq_length,
+            max_new_tokens,
+            seed,
+            attn_type,
+            loc_version_tuple,
+            device_type,
+            dtype,
+        )
         # if the path is found, we are done searching and can return
         if os.path.exists(full_path):
             result_path = full_path
