@@ -516,6 +516,11 @@ def get_programs_prompts(
                         if (
                             resolved_programs[program_index] is None
                             or padding < resolved_programs[program_index][1]
+                            or (
+                                padding == resolved_programs[program_index][1]
+                                and program_criteria.batch_granularity
+                                > resolved_programs[program_index][0].batch_granularity
+                            )
                         ):
                             resolved_programs[program_index] = (
                                 program_criteria,
