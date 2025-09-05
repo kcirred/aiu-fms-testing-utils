@@ -140,8 +140,10 @@ DATASET_PATH = args.dataset_path
 
 if args.dataset_type == "rag_factoid":
     sampler = sample_granite_3_3_long_answerable_requests
+    allow_truncation = False
 elif args.dataset_type == "sharegpt":
     sampler = sample_sharegpt_requests
+    allow_truncation = True
 else:
     raise ValueError("dataset_type must be one of rag_factoid or sharegpt")
 
@@ -179,17 +181,17 @@ max_batch_size = int(os.environ["VLLM_DT_MAX_BATCH_SIZE"])
 max_tkv = int(os.environ["VLLM_DT_MAX_CONTEXT_LEN"])
 
 
-def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
+def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0):
     start = time.time()
     prompts_and_sizes = sampler(
         DATASET_PATH,
         batch_size,
         tokenizer,
         32,
-        seq_length * 2,
+        seq_length * 2 if allow_truncation else seq_length,
         seed,
-        enforce_sizes=[seq_length],
-        truncation=True
+        enforce_sizes=enforce_sizes,
+        truncation=allow_truncation
     )
     end = time.time()
     if local_rank == 0:
@@ -198,6 +200,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
     for prompt, size in prompts_and_sizes:
         encoded = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
         if size > seq_length:
+            assert not allow_truncation
             encoded = encoded[:seq_length]
         prompt_list.append(encoded)
 
@@ -266,7 +269,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_variant)
 
 # warmup with any input so compiler produces criteria json
 input_ids, extra_kwargs = __prepare_inputs(
-    2, 64, tokenizer
+    2, max_tkv, tokenizer
 )
 extra_kwargs["attn_name"] = ATTN_NAME
 if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
@@ -361,7 +364,7 @@ def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
 failed_cases = []
 for program_id, valid_prompt in valid_prompts:  # for each program
     input_ids, extra_kwargs = __prepare_inputs(
-        valid_prompt[0], valid_prompt[1], tokenizer
+        valid_prompt[0], valid_prompt[1], tokenizer, enforce_sizes=[valid_prompt[1]]
     )
     extra_kwargs["attn_name"] = ATTN_NAME
     if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:

@@ -471,13 +471,8 @@ def sample_granite_3_3_long_answerable_requests(
     # Load the dataset.
     with open(dataset_path, "r", encoding='utf-8') as f:
         for line in f:
-            line = line.strip()  # Remove whitespace/newlines     
-            try:
-                prompt = json.loads(line)["granite_3_3_prompt"]
-                dataset.append(prompt)
-            except json.JSONDecodeError as e:
-                print(f"Error parsing line: {e}")
-                print(f"Problematic line: {line}")
+            dataset.append(line)
+
     
     return __sample_requests(
         dataset,
