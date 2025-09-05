@@ -116,7 +116,9 @@ def generate(
     _MAX_BATCH = int(os.environ["VLLM_DT_MAX_BATCH_SIZE"])
     _MAX_CONTEXT_LENGTH = int(os.environ["VLLM_DT_MAX_CONTEXT_LEN"])
     # if the user provides a hint to the number of blocks to use, use it directly
-    NUM_BLOCKS = kwargs.get("_kvcache_num_blocks_hint", (_MAX_BATCH * _MAX_CONTEXT_LENGTH) // BLOCK_SIZE)
+    NUM_BLOCKS = kwargs.get(
+        "_kvcache_num_blocks_hint", (_MAX_BATCH * _MAX_CONTEXT_LENGTH) // BLOCK_SIZE
+    )
 
     if hasattr(model, "head"):
         model_dtype = model.head.weight.dtype
@@ -469,7 +471,11 @@ class ProgramCriteria:
         self.tkv_granularity = tkv_granularity
 
     def is_possible(self, batch_size, tkv):
-        return (batch_size * tkv <= VLLM_DT_MAX_BATCH_TKV_LIMIT) and (batch_size <= self.max_batch) and (tkv <= self.max_tkv)
+        return (
+            (batch_size * tkv <= VLLM_DT_MAX_BATCH_TKV_LIMIT)
+            and (batch_size <= self.max_batch)
+            and (tkv <= self.max_tkv)
+        )
 
     def calculate_padding(self, batch_size, tkv):
         min_batch_req = (
@@ -533,5 +539,9 @@ def get_programs_prompts(
                     program_map[key].append((batch_size, prompt_len))
                 else:
                     program_map[key] = [(batch_size, prompt_len)]
+
+    # give higher priority to larger batches
+    for _, v in program_map.items():
+        v.sort(key=lambda t: t[0], reverse=True)
 
     return program_map
