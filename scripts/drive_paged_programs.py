@@ -368,7 +368,7 @@ for v in program_map.values():
 valid_prompts = []
 for program_id, min_batch_size, min_prompt_length in programs:
     found_valid_prompt = False
-    for valid_prompt_shape in program_map[(program_criteria_list[program_id],)]:
+    for valid_prompt_shape in program_map.get((program_criteria_list[program_id],), []):
         # make sure the criteria for min batch and min prompt is satisfied
         if (
             valid_prompt_shape[0] >= min_batch_size

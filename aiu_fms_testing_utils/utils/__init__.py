@@ -456,7 +456,7 @@ def __sample_requests(
         filtered_dataset = _merge_enforce_keep_heterogeneous(
             enforced_dataset, filtered_dataset, num_requests
         )
-    elif enforced_dataset and not enforce_heterogeneous:
+    elif enforced_dataset:
         filtered_dataset = enforced_dataset + filtered_dataset
 
     if len(filtered_dataset) != num_requests:
