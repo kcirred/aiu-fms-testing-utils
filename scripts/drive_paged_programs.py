@@ -321,6 +321,10 @@ warmup_model(
     **extra_kwargs,
 )
 
+if USE_DISTRIBUTED:
+    # wait for rank0 to be finished as it is the only one generating the criteria json
+    torch.distributed.barrier()
+
 with open(args.program_criteria_json_path, "r") as f:
     program_criteria_json_list = json.load(f)["programs"]
     program_criteria_list = []
