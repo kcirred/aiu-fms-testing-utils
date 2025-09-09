@@ -425,6 +425,8 @@ def __sample_requests(
                     )
                     enforced_dataset.append((truncated_prompt, truncate_to_size))
                     enforce_sizes_with_truncation.remove(truncation_found)
+            # This condition allows adding prompts to the final dataset as long as there is
+            # sufficient space allocated for sizes that need to be enforced.
             if (
                 not truncation_found
                 and current_padded_size not in enforce_sizes
@@ -456,7 +458,7 @@ def __sample_requests(
         filtered_dataset = _merge_enforce_keep_heterogeneous(
             enforced_dataset, filtered_dataset, num_requests
         )
-    elif enforced_dataset and not enforce_heterogeneous:
+    elif enforced_dataset:
         filtered_dataset = enforced_dataset + filtered_dataset
 
     if len(filtered_dataset) != num_requests:
