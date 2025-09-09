@@ -13,6 +13,9 @@ from aiu_fms_testing_utils.testing.validation import (
     GoldenTokenHook,
     capture_level_1_metrics,
     filter_failed_level_1_cases,
+    find_validation_info_path,
+    get_validation_info_path,
+    load_validation_information,
     top_k_loss_calculator,
 )
 from torch import distributed as dist
@@ -130,6 +133,17 @@ parser.add_argument(
     action="store_true",
     help="set to true to skip cpu validation",
 )
+parser.add_argument(
+    "--validation_info_outputs_dir",
+    type=str,
+    default="/home/senuser/models/validation_info",
+    help="path to directory containing validation info outputs"
+)
+parser.add_argument(
+    "--save_validation_info_outputs",
+    action="store_true",
+    help="set to true to save cpu validation outputs for later consumption",
+)
 
 args = parser.parse_args()
 
@@ -137,6 +151,7 @@ args = parser.parse_args()
 max_new_tokens = args.max_new_tokens
 model_variant = args.model_variant
 DATASET_PATH = args.dataset_path
+save_validation_info_outputs = args.save_validation_info_outputs
 
 if args.dataset_type == "rag_factoid":
     sampler = sample_granite_3_3_long_answerable_requests
@@ -162,6 +177,7 @@ attention_map = {
     "paged_fp8": "spyre_paged_attn_fp8",
 }
 ATTN_NAME = attention_map[args.attention_type]
+CPU_DTYPE = "fp8" if is_fp8 else "fp32"
 
 torch.manual_seed(42)
 torch.set_grad_enabled(False)
@@ -200,7 +216,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
     for prompt, size in prompts_and_sizes:
         encoded = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
         if size > seq_length:
-            assert not allow_truncation
+            assert allow_truncation
             encoded = encoded[:seq_length]
         prompt_list.append(encoded)
 
@@ -218,6 +234,25 @@ def __maybe_prepare_fp8_weights(model_in, is_fp8):
                     )
                 param.data = param.data.to(dtype=torch.float16)
 
+def __load_validation_info(
+    model_variant, batch_size, seq_length, max_new_tokens, tokenizer, seed, attn_type: str
+):
+    full_path = find_validation_info_path(
+        args.validation_info_outputs_dir,
+        model_variant,
+        batch_size,
+        seq_length,
+        max_new_tokens,
+        seed,
+        attn_type,
+        version_allow_decrement=True,
+        dtype=CPU_DTYPE,
+    )
+    if full_path is not None:
+        dprint(f"cpu validation info found for seed={seed} -- loading it")
+        return load_validation_information(full_path, "logits", batch_size, tokenizer)
+    else:
+        return None
 
 model_path_kwargs = {}
 if os.path.exists(model_variant):
@@ -237,6 +272,9 @@ if USE_DISTRIBUTED:
     aiu_dist_setup(dist.get_rank(), dist.get_world_size())
     distributed_kwargs["distributed_strategy"] = "tp"
     distributed_kwargs["group"] = dist.group.WORLD
+    save_validation_info_outputs = save_validation_info_outputs and (
+        dist.get_rank() == 0
+    )
 
 with stagger_region(args.stagger_load):
     model = get_model(
@@ -377,14 +415,34 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         )
 
     if not args.skip_validation:
-        cpu_validation_info = extract_validation_information(
-            validation_model,
-            input_ids,
-            max_new_tokens,
-            LogitsExtractorHook(),
-            attn_algorithm="math",
-            **extra_kwargs,
+        # attempt to load the cpu validation info if it is already computed
+        cpu_validation_info = __load_validation_info(
+            model_variant, valid_prompt[0], valid_prompt[1], max_new_tokens, tokenizer, seed=0, attn_type=ATTN_NAME
         )
+        # if the cpu validation info is not yet computed, compute it
+        if cpu_validation_info is None:
+            cpu_validation_info = extract_validation_information(
+                validation_model,
+                input_ids,
+                max_new_tokens,
+                LogitsExtractorHook(),
+                attn_algorithm="math",
+                **extra_kwargs,
+            )
+            # save the cpu validation info for later consumption
+            if save_validation_info_outputs:
+                cpu_validation_info.save(
+                    get_validation_info_path(
+                        args.validation_info_outputs_dir,
+                        model_variant,
+                        valid_prompt[0],
+                        valid_prompt[1],
+                        max_new_tokens,
+                        0,
+                        ATTN_NAME,
+                        dtype=CPU_DTYPE,
+                    )
+                )
 
         if args.test_type == "metrics":
             aiu_validation_info = extract_validation_information(
