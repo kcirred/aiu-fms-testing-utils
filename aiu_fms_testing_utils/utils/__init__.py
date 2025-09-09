@@ -378,7 +378,10 @@ def __sample_requests(
         random.Random(seed).shuffle(dataset)
 
     for prompt, prompt_len in dataset:
-        if len(filtered_dataset) == num_requests and not enforce_sizes:
+        if (
+            len(filtered_dataset) + len(enforced_dataset) == num_requests
+            and not enforce_sizes
+        ):
             break
 
         # NOTE: This section is for enforce heterogeneous, does not work with enforce_sizes
@@ -387,7 +390,6 @@ def __sample_requests(
             and max_heterogeneous_combinations > len(filtered_dataset)
             and len(filtered_dataset) < num_requests
         ):
-            # for _, size in filtered_dataset:
             current_padded_size = pad_size_dict[prompt_len]
 
             if current_padded_size not in seen_sizes:
@@ -403,6 +405,7 @@ def __sample_requests(
             # NOTE: this should not be `elif` despite enforce_sizes and enforce_sizes_with_truncation
             # are mutually exclusive because we allow same prompt to be used in enforce_sizes_with_truncation
             # even if it is taken from enforce_sizes
+            truncation_found = None
             if enforce_sizes_with_truncation:
                 truncation_found: Tuple[int, int] = next(
                     (
@@ -422,6 +425,16 @@ def __sample_requests(
                     )
                     enforced_dataset.append((truncated_prompt, truncate_to_size))
                     enforce_sizes_with_truncation.remove(truncation_found)
+            # This condition allows adding prompts to the final dataset as long as there is
+            # sufficient space allocated for sizes that need to be enforced.
+            if (
+                not truncation_found
+                and current_padded_size not in enforce_sizes
+                and len(filtered_dataset) + len(enforced_dataset)
+                < num_requests
+                - (len(enforce_sizes) + len(enforce_sizes_with_truncation))
+            ):
+                filtered_dataset.append((prompt, prompt_len))
 
         # when not enforcing heterogeneous or when exhausted all possible prompt_lengths
         else:
@@ -441,10 +454,12 @@ def __sample_requests(
         print(
             f"There may be prompt size repeats because {num_requests=} while {max_heterogeneous_combinations=}"
         )
-    if enforced_dataset:
+    if enforced_dataset and enforce_heterogeneous:
         filtered_dataset = _merge_enforce_keep_heterogeneous(
             enforced_dataset, filtered_dataset, num_requests
         )
+    elif enforced_dataset:
+        filtered_dataset = enforced_dataset + filtered_dataset
 
     if len(filtered_dataset) != num_requests:
         warnings.warn("Returning dataset not equal to number requested", stacklevel=2)
