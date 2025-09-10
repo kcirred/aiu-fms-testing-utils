@@ -71,6 +71,7 @@ def generate(
     if isinstance(input_ids, torch.Tensor):
         if len(input_ids.shape) == 1:
             input_ids = input_ids.unsqueeze(0)
+        is_batch = input_ids.shape[0] > 1
     else:
         raise TypeError("input_ids must be one of Tensor or List")
 
@@ -325,7 +326,7 @@ def generate(
                 [
                     (
                         [b_seq[0]]
-                        * (max(2, max([len(b) for b in block_table])) - len(b_seq))
+                        * (max([len(b) for b in block_table]) - len(b_seq))
                     )
                     + b_seq
                     for b_seq in block_table
