@@ -301,7 +301,7 @@ if not args.skip_computation:
             ids.to(args.device),
             args.max_new_tokens,
             LogitsExtractorHook(),
-            only_last_token=True,
+            last_n_tokens=1,
             **{k: v.to("cuda") for k, v in extra_generation_kwargs.items()},
             attn_name=attn_name,
         )
@@ -317,7 +317,7 @@ if not args.skip_computation:
         ids.to("cuda"),
         args.max_new_tokens,
         None,
-        only_last_token=True,
+        last_n_tokens=1,
         **{k: v.to("cuda") for k, v in extra_generation_kwargs.items()},
         attn_name=attn_name,
     )
@@ -404,7 +404,7 @@ for i in range(num_test_tokens_per_sequence // args.max_new_tokens):
                     ids.to("cuda"),
                     args.max_new_tokens,
                     LogitsExtractorHook(),
-                    only_last_token=True,
+                    last_n_tokens=1,
                     **{k: v.to("cuda") for k, v in extra_generation_kwargs.items()},
                     attn_name=attn_name,
                 )
@@ -415,7 +415,7 @@ for i in range(num_test_tokens_per_sequence // args.max_new_tokens):
             ids.to("cuda"),
             args.max_new_tokens,
             GoldenTokenHook(fp32_validation_info.get_info("tokens"), "cuda"),
-            only_last_token=True,
+            last_n_tokens=1,
             **{k: v.to("cuda") for k, v in extra_generation_kwargs.items()},
             attn_name=attn_name,
         )
