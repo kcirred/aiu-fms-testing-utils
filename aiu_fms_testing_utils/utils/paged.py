@@ -387,19 +387,9 @@ def generate(
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
         if post_iteration_hook is not None:
-            _logits = logits
-            _next_val = next_val
-            # since we cannot handle batch size 1 and mimic with batch size 2, we need to only pass in the first logits/next_val
-            if not is_batch:
-                _logits = logits[0].unsqueeze(0)
-                _next_val = _next_val[0].unsqueeze(0)
-            _next_val, kwargs = post_iteration_hook(
-                i + prompt_length, _logits, _next_val, kwargs
+            next_val, kwargs = post_iteration_hook(
+                i + prompt_length, logits, next_val, kwargs
             )
-            # we need to normalize back to batch size 2
-            if not is_batch:
-                # we need to do an in-place copy here for the same reason we do in-place copy for injecting tokens
-                next_val.copy_(torch.cat((_next_val, _next_val), dim=0))
 
         result = torch.cat((result, next_val), dim=-1)
 
@@ -519,7 +509,7 @@ def get_programs_prompts(
                     program_map[key] = [(batch_size, prompt_len)]
 
     # give higher priority to larger batches
-    for _, v in program_map.items():
-        v.sort(key=lambda t: t[0], reverse=True)
+    # for _, v in program_map.items():
+    #     v.sort(key=lambda t: t[0], reverse=True)
 
     return program_map
