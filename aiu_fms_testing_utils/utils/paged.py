@@ -6,24 +6,6 @@ import torch
 import fms.utils.spyre.paged  # noqa
 
 
-def adjust_inputs_to_batch(input_ids: torch.Tensor, **extra_kwargs):
-    """
-    Adjusts the inputs to a batch. Batch size 1 cannot be handled since we want a symbolic shape for the batch
-    and pytorch automatically sets size 1 dimensions as static
-
-    Note: This is fixed in pytorch 2.7
-    """
-    input_ids = input_ids[0].repeat(2, 1)
-    # ensure we pass along other kwargs
-    kwargs = {**extra_kwargs}
-    mask = extra_kwargs.get("mask", None)
-    if mask is not None:
-        kwargs["mask"] = torch.stack((mask[0], mask[0]))
-    position_ids = extra_kwargs.get("position_ids", None)
-    if position_ids is not None:
-        kwargs["position_ids"] = position_ids[0].repeat(2, 1)
-    return input_ids, kwargs
-
 
 # FIXME: We should use default generate, but that will require a larger re-work of generate
 def generate(
@@ -89,11 +71,6 @@ def generate(
     if isinstance(input_ids, torch.Tensor):
         if len(input_ids.shape) == 1:
             input_ids = input_ids.unsqueeze(0)
-
-        is_batch = input_ids.shape[0] > 1
-        # our model requires batch dimension
-        if not is_batch:
-            input_ids, kwargs = adjust_inputs_to_batch(input_ids, **kwargs)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
 

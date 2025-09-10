@@ -1,28 +1,29 @@
-import time
+import argparse
 import datetime
-from aiu_fms_testing_utils.utils.paged import ProgramCriteria, get_programs_prompts
-import torch
+import json
 import os
 import random
+import time
+
+import torch
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
-from aiu_fms_testing_utils.utils.aiu_setup import aiu_dist_setup, local_rank, dprint
-from aiu_fms_testing_utils.testing.validation import (
-    extract_validation_information,
-    LogitsExtractorHook,
-    GoldenTokenHook,
-    capture_level_1_metrics,
-    filter_failed_level_1_cases,
-    find_validation_info_path,
-    get_validation_info_path,
-    load_validation_information,
-    top_k_loss_calculator,
-)
 from torch import distributed as dist
-from aiu_fms_testing_utils.utils import sample_sharegpt_requests, warmup_model, stagger_region, sample_granite_3_3_long_answerable_requests
+from torch.fx.experimental import _config as fx_config
 from transformers import AutoTokenizer
-import json
-import argparse
+
+from aiu_fms_testing_utils.testing.validation import (
+    GoldenTokenHook, LogitsExtractorHook, capture_level_1_metrics,
+    extract_validation_information, filter_failed_level_1_cases,
+    find_validation_info_path, get_validation_info_path,
+    load_validation_information, top_k_loss_calculator)
+from aiu_fms_testing_utils.utils import (
+    sample_granite_3_3_long_answerable_requests, sample_sharegpt_requests,
+    stagger_region, warmup_model)
+from aiu_fms_testing_utils.utils.aiu_setup import (aiu_dist_setup, dprint,
+                                                   local_rank)
+from aiu_fms_testing_utils.utils.paged import (ProgramCriteria,
+                                               get_programs_prompts)
 
 parser = argparse.ArgumentParser(
     description="Script which will drive paged programs for debugging"
@@ -287,6 +288,7 @@ with stagger_region(args.stagger_load):
     )
 
 model.eval()
+fx_config.backed_size_oblivious = True
 model.compile(backend="sendnn", options={"sendnn.dynamic": True})
 
 __maybe_prepare_fp8_weights(model, is_fp8)
