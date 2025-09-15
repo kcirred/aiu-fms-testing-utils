@@ -59,7 +59,7 @@ def warmup_model(
     attention_specific_kwargs = {}
     attn_name = extra_kwargs.get("attn_name", "sdpa")
     if "paged" in attn_name:
-        from aiu_fms_testing_utils.utils.paged import generate, adjust_inputs_to_batch
+        from aiu_fms_testing_utils.utils.paged import generate
     else:
         # TODO: Add a unified generation dependent on attn_type
         from fms.utils.generation import generate
@@ -76,12 +76,6 @@ def warmup_model(
     _max_new_tokens = max_new_tokens
     if compile_dynamic_sendnn:
         _max_new_tokens = 2
-        # always warmup with batch size 2 when using attn_type=paged
-        if "paged" in attn_name:
-            _warmup_input_ids, _extra_kwargs = adjust_inputs_to_batch(
-                input_ids,
-                **extra_kwargs,
-            )
 
     extra_kwargs = {**_extra_kwargs, "only_last_token": "paged" not in attn_name}
 

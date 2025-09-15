@@ -6,24 +6,6 @@ import torch
 import fms.utils.spyre.paged  # noqa
 
 
-def adjust_inputs_to_batch(input_ids: torch.Tensor, **extra_kwargs):
-    """
-    Adjusts the inputs to a batch. Batch size 1 cannot be handled since we want a symbolic shape for the batch
-    and pytorch automatically sets size 1 dimensions as static
-
-    Note: This is fixed in pytorch 2.7
-    """
-    input_ids = input_ids[0].repeat(2, 1)
-    # ensure we pass along other kwargs
-    kwargs = {**extra_kwargs}
-    mask = extra_kwargs.get("mask", None)
-    if mask is not None:
-        kwargs["mask"] = torch.stack((mask[0], mask[0]))
-    position_ids = extra_kwargs.get("position_ids", None)
-    if position_ids is not None:
-        kwargs["position_ids"] = position_ids[0].repeat(2, 1)
-    return input_ids, kwargs
-
 
 # FIXME: We should use default generate, but that will require a larger re-work of generate
 def generate(
@@ -89,11 +71,7 @@ def generate(
     if isinstance(input_ids, torch.Tensor):
         if len(input_ids.shape) == 1:
             input_ids = input_ids.unsqueeze(0)
-
         is_batch = input_ids.shape[0] > 1
-        # our model requires batch dimension
-        if not is_batch:
-            input_ids, kwargs = adjust_inputs_to_batch(input_ids, **kwargs)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
 
@@ -348,7 +326,7 @@ def generate(
                 [
                     (
                         [b_seq[0]]
-                        * (max(2, max([len(b) for b in block_table])) - len(b_seq))
+                        * (max([len(b) for b in block_table]) - len(b_seq))
                     )
                     + b_seq
                     for b_seq in block_table
@@ -409,19 +387,9 @@ def generate(
             next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
         if post_iteration_hook is not None:
-            _logits = logits
-            _next_val = next_val
-            # since we cannot handle batch size 1 and mimic with batch size 2, we need to only pass in the first logits/next_val
-            if not is_batch:
-                _logits = logits[0].unsqueeze(0)
-                _next_val = _next_val[0].unsqueeze(0)
-            _next_val, kwargs = post_iteration_hook(
-                i + prompt_length, _logits, _next_val, kwargs
+            next_val, kwargs = post_iteration_hook(
+                i + prompt_length, logits, next_val, kwargs
             )
-            # we need to normalize back to batch size 2
-            if not is_batch:
-                # we need to do an in-place copy here for the same reason we do in-place copy for injecting tokens
-                next_val.copy_(torch.cat((_next_val, _next_val), dim=0))
 
         result = torch.cat((result, next_val), dim=-1)
 
@@ -541,7 +509,7 @@ def get_programs_prompts(
                     program_map[key] = [(batch_size, prompt_len)]
 
     # give higher priority to larger batches
-    for _, v in program_map.items():
-        v.sort(key=lambda t: t[0], reverse=True)
+    # for _, v in program_map.items():
+    #     v.sort(key=lambda t: t[0], reverse=True)
 
     return program_map
