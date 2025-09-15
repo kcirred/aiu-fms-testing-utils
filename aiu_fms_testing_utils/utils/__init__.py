@@ -19,6 +19,7 @@ import math
 import contextlib
 import warnings
 
+
 @contextlib.contextmanager
 def stagger_region(limit: int):
     """
@@ -59,7 +60,7 @@ def warmup_model(
     attention_specific_kwargs = {}
     attn_name = extra_kwargs.get("attn_name", "sdpa")
     if "paged" in attn_name:
-        from aiu_fms_testing_utils.utils.paged import generate
+        from aiu_fms_testing_utils.utils.paged import generate, adjust_inputs_to_batch
     else:
         # TODO: Add a unified generation dependent on attn_type
         from fms.utils.generation import generate
@@ -76,6 +77,13 @@ def warmup_model(
     _max_new_tokens = max_new_tokens
     if compile_dynamic_sendnn:
         _max_new_tokens = 2
+        # When performing fp8 paged attention, we must pad to batch size 2
+        # this is fixed in torch >= 2.8
+        if attn_name == "spyre_paged_attn_fp8":
+            _warmup_input_ids, _extra_kwargs = adjust_inputs_to_batch(
+                input_ids,
+                **extra_kwargs,
+            )
 
     extra_kwargs = {**_extra_kwargs, "only_last_token": "paged" not in attn_name}
 
@@ -231,7 +239,6 @@ def _remove_list_from_list(main_list, list_to_remove):
             main_list.remove(item)
     return main_list
 
-__cached_encoded_datasets = {}
 
 # Because we now require encoding the dataset, cache the datasets to make
 # second sample request quick

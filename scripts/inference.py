@@ -1,28 +1,28 @@
 # Standard
 import argparse
 import datetime
+from functools import partial
 import itertools
 import json
 import os
+from pathlib import Path
 import random
 import time
-from functools import partial
-from pathlib import Path
 
+# Third Party
+from aiu_fms_testing_utils.utils import aiu_setup, warmup_model, stagger_region
+from aiu_fms_testing_utils.utils.aiu_setup import dprint, rank, local_rank, world_size
 import numpy as np
 import torch
+from torch import distributed as dist
+from torch.fx.experimental import _config as fx_config
 from fms.models import get_model, register_model
 from fms.models.llama import LLaMAConfig, _llama_factory_factory
 from fms.utils import generation
 from fms.utils.generation import pad_input_ids
-from torch import distributed as dist
-from torch.fx.experimental import _config as fx_config
+
 from transformers import AutoTokenizer
 
-# Third Party
-from aiu_fms_testing_utils.utils import aiu_setup, stagger_region, warmup_model
-from aiu_fms_testing_utils.utils.aiu_setup import (dprint, local_rank, rank,
-                                                   world_size)
 
 # This example script validates the LLaMA implementation by running inference on a couple of prompts.
 #
@@ -279,16 +279,14 @@ if "fp8" in attn_name:
 if args.quantization == "gptq":
     if "aiu" in args.device_type:
         try:
-            from fms_mo.aiu_addons.gptq import (gptq_aiu_adapter,  # noqa
-                                                gptq_aiu_linear)
+            from fms_mo.aiu_addons.gptq import gptq_aiu_adapter, gptq_aiu_linear  # noqa
 
             print("Loaded `aiu_addons` functionalities")
         except ImportError:
             raise ImportError("Failed to import GPTQ addons from fms-mo.")
 elif args.quantization == "int8":
     try:
-        from fms_mo.aiu_addons.i8i8 import (i8i8_aiu_adapter,  # noqa
-                                            i8i8_aiu_linear)
+        from fms_mo.aiu_addons.i8i8 import i8i8_aiu_adapter, i8i8_aiu_linear  # noqa
 
         print("Loaded `aiu_addons` functionalities")
     except ImportError:
@@ -734,9 +732,6 @@ if "paged" in attn_name:
         ),
     )
     os.environ.setdefault("VLLM_DT_MAX_BATCH_SIZE", str(max(ids.shape[0], 2)))
-    if ((args.model_path is not None and "ibm-granite/granite-3.3-8b-instruct" in args.model_path) or (args.variant is not None and "ibm-granite/granite-3.3-8b-instruct" in args.variant)) \
-        and args.distributed and dist.get_world_size() == 4:
-        extra_generation_kwargs["_kvcache_num_blocks_hint"] = 2080
 
 
 def print_result(result, result_idx: int):
