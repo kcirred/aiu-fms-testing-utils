@@ -518,14 +518,17 @@ def sample_sharegpt_requests(
 ) -> List[Tuple[str, int]]:
     if not os.path.exists(dataset_path):
         print("downloading share-gpt dataset as it does not exist")
-        if rank < 1:
+        is_distributed_initialized = torch.distributed.is_initialized()
+        if not is_distributed_initialized or rank < 1:
             __download_file(
                 "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json",
                 dataset_path,
             )
         else:
             print("waiting for rank0 to complete download")
-        torch.distributed.barrier()
+
+        if is_distributed_initialized:
+            torch.distributed.barrier()
 
     if enforce_sizes is None:
         enforce_sizes = []
