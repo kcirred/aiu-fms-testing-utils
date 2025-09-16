@@ -185,6 +185,7 @@ if compile_dynamic_sendnn:
         ]
     )
     os.environ["VLLM_DT_MAX_BATCH_SIZE"] = str(max(max(common_batch_sizes), 2))
+    fx_config.backed_size_oblivious = True
 
 # thresholds are chosen based on 1024 tokens per sequence
 # 1% error threshold rate between cpu fp32 and cuda fp16
@@ -402,7 +403,6 @@ class PersistentModel:
             self.__maybe_prepare_fp8_weights(model, is_fp8)
 
             model.eval()
-            fx_config.backed_size_oblivious = compile_dynamic_sendnn
             model.compile(
                 backend="sendnn", options={"sendnn.dynamic": compile_dynamic_sendnn}
             )
@@ -632,7 +632,8 @@ def test_common_shapes(
                 )
                 extra_kwargs["attn_name"] = ATTN_NAME
                 if (
-                    "ibm-granite/granite-3.3-8b-instruct" in model_path
+                    "paged" in ATTN_NAME
+                    and "ibm-granite/granite-3.3-8b-instruct" in model_path
                     and USE_DISTRIBUTED
                     and dist.get_world_size() == 4
                 ):
