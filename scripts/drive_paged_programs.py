@@ -13,17 +13,24 @@ from torch.fx.experimental import _config as fx_config
 from transformers import AutoTokenizer
 
 from aiu_fms_testing_utils.testing.validation import (
-    GoldenTokenHook, LogitsExtractorHook, capture_level_1_metrics,
-    extract_validation_information, filter_failed_level_1_cases,
-    find_validation_info_path, get_validation_info_path,
-    load_validation_information, top_k_loss_calculator)
+    GoldenTokenHook,
+    LogitsExtractorHook,
+    capture_level_1_metrics,
+    extract_validation_information,
+    filter_failed_level_1_cases,
+    find_validation_info_path,
+    get_validation_info_path,
+    load_validation_information,
+    top_k_loss_calculator,
+)
 from aiu_fms_testing_utils.utils import (
-    sample_granite_3_3_long_answerable_requests, sample_sharegpt_requests,
-    stagger_region, warmup_model)
-from aiu_fms_testing_utils.utils.aiu_setup import (aiu_dist_setup, dprint,
-                                                   local_rank)
-from aiu_fms_testing_utils.utils.paged import (ProgramCriteria,
-                                               get_programs_prompts)
+    sample_granite_3_3_long_answerable_requests,
+    sample_sharegpt_requests,
+    stagger_region,
+    warmup_model,
+)
+from aiu_fms_testing_utils.utils.aiu_setup import aiu_dist_setup, dprint, local_rank
+from aiu_fms_testing_utils.utils.paged import ProgramCriteria, get_programs_prompts
 
 parser = argparse.ArgumentParser(
     description="Script which will drive paged programs for debugging"
@@ -80,7 +87,7 @@ parser.add_argument(
     type=str,
     choices=["rag_factoid", "sharegpt"],
     default="sharegpt",
-    help="selects the correct dataset type for sampling. Must be one of rag_factoid or sharegpt"
+    help="selects the correct dataset type for sampling. Must be one of rag_factoid or sharegpt",
 )
 parser.add_argument(
     "--test_type",
@@ -138,12 +145,17 @@ parser.add_argument(
     "--validation_info_outputs_dir",
     type=str,
     default="/home/senuser/models/validation_info",
-    help="path to directory containing validation info outputs"
+    help="path to directory containing validation info outputs",
 )
 parser.add_argument(
     "--save_validation_info_outputs",
     action="store_true",
     help="set to true to save cpu validation outputs for later consumption",
+)
+parser.add_argument(
+    "--prioritize_large_batch_sizes",
+    action="store_true",
+    help="set to true if you would like to prioritize large batch sizes",
 )
 
 args = parser.parse_args()
@@ -208,7 +220,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
         seq_length * 2 if allow_truncation else seq_length,
         seed,
         enforce_sizes=enforce_sizes,
-        truncation=allow_truncation
+        truncation=allow_truncation,
     )
     end = time.time()
     if local_rank == 0:
@@ -235,8 +247,15 @@ def __maybe_prepare_fp8_weights(model_in, is_fp8):
                     )
                 param.data = param.data.to(dtype=torch.float16)
 
+
 def __load_validation_info(
-    model_variant, batch_size, seq_length, max_new_tokens, tokenizer, seed, attn_type: str
+    model_variant,
+    batch_size,
+    seq_length,
+    max_new_tokens,
+    tokenizer,
+    seed,
+    attn_type: str,
 ):
     full_path = find_validation_info_path(
         args.validation_info_outputs_dir,
@@ -254,6 +273,7 @@ def __load_validation_info(
         return load_validation_information(full_path, "logits", batch_size, tokenizer)
     else:
         return None
+
 
 model_path_kwargs = {}
 if os.path.exists(model_variant):
@@ -308,11 +328,13 @@ if not args.skip_validation:
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
 
 # warmup with any input so compiler produces criteria json
-input_ids, extra_kwargs = __prepare_inputs(
-    2, max_tkv, tokenizer
-)
+input_ids, extra_kwargs = __prepare_inputs(2, max_tkv, tokenizer)
 extra_kwargs["attn_name"] = ATTN_NAME
-if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
+if (
+    "granite-3.3-8b-instruct" in model_variant
+    and USE_DISTRIBUTED
+    and dist.get_world_size() == 4
+):
     extra_kwargs["_kvcache_num_blocks_hint"] = 2080
 warmup_model(
     model,
@@ -366,6 +388,7 @@ program_map = get_programs_prompts(
     max_batch_size=max_batch_size,
     max_tkv=max_tkv,
     program_cycles=max_new_tokens,
+    prioritize_large_batch_sizes=args.prioritize_large_batch_sizes,
 )
 for v in program_map.values():
     random.Random(42).shuffle(v)
@@ -374,7 +397,9 @@ for v in program_map.values():
 valid_prompts = []
 for program_id, min_batch_size, min_prompt_length in programs:
     found_valid_prompt = False
-    valid_map_keys = [k for k in program_map.keys() if k[0] == program_criteria_list[program_id]]
+    valid_map_keys = [
+        k for k in program_map.keys() if k[0] == program_criteria_list[program_id]
+    ]
 
     if len(valid_map_keys) > 0:
         for valid_prompt_shape in program_map.get(valid_map_keys[0], []):
@@ -414,7 +439,11 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         valid_prompt[0], valid_prompt[1], tokenizer, enforce_sizes=[valid_prompt[1]]
     )
     extra_kwargs["attn_name"] = ATTN_NAME
-    if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
+    if (
+        "granite-3.3-8b-instruct" in model_variant
+        and USE_DISTRIBUTED
+        and dist.get_world_size() == 4
+    ):
         extra_kwargs["_kvcache_num_blocks_hint"] = 2080
 
     if local_rank == 0:
@@ -426,7 +455,13 @@ for program_id, valid_prompt in valid_prompts:  # for each program
     if not args.skip_validation:
         # attempt to load the cpu validation info if it is already computed
         cpu_validation_info = __load_validation_info(
-            model_variant, valid_prompt[0], valid_prompt[1], max_new_tokens, tokenizer, seed=0, attn_type=ATTN_NAME
+            model_variant,
+            valid_prompt[0],
+            valid_prompt[1],
+            max_new_tokens,
+            tokenizer,
+            seed=0,
+            attn_type=ATTN_NAME,
         )
         # if the cpu validation info is not yet computed, compute it
         if cpu_validation_info is None:
@@ -515,7 +550,9 @@ for program_id, valid_prompt in valid_prompts:  # for each program
                         aiu_validation_info.get_info("tokens"),
                     )
                 ):
-                    tokens_prompt = [t.item() for t in reference_sentence[:-max_new_tokens]]
+                    tokens_prompt = [
+                        t.item() for t in reference_sentence[:-max_new_tokens]
+                    ]
                     cpu_tokens_generated = [
                         t.item() for t in reference_sentence[-max_new_tokens:]
                     ]
@@ -542,7 +579,9 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         )
 
         if local_rank == 0:
-            for sentence_idx, test_sentence in enumerate(aiu_validation_info.get_info("tokens")):
+            for sentence_idx, test_sentence in enumerate(
+                aiu_validation_info.get_info("tokens")
+            ):
                 tokens_prompt = [t.item() for t in test_sentence[:-max_new_tokens]]
                 aiu_tokens_generated = [
                     t.item() for t in test_sentence[-max_new_tokens:]

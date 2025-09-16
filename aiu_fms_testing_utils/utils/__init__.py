@@ -485,11 +485,10 @@ def sample_granite_3_3_long_answerable_requests(
 
     dataset = []
     # Load the dataset.
-    with open(dataset_path, "r", encoding='utf-8') as f:
+    with open(dataset_path, "r", encoding="utf-8") as f:
         for line in f:
             dataset.append(line)
 
-    
     return __sample_requests(
         dataset,
         num_requests,
@@ -501,7 +500,7 @@ def sample_granite_3_3_long_answerable_requests(
         enforce_sizes,
         truncation,
         pad_multiple,
-        _cached_dataset_key=dataset_path
+        _cached_dataset_key=dataset_path,
     )
 
 
@@ -532,7 +531,7 @@ def sample_sharegpt_requests(
         enforce_sizes = []
 
     # Load the dataset.
-    with open(dataset_path, 'r', encoding="utf-8") as f:
+    with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
     # Filter out the conversations with less than 2 turns.
     dataset = [data for data in dataset if len(data["conversations"]) >= 2]

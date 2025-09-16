@@ -314,12 +314,11 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
             batch_size,
             tokenizer,
             32,
-            seq_length*2, # this ensures we get sequences back
+            seq_length,
             seed,
-            enforce_heterogeneous=False,
+            enforce_heterogeneous=True,
             enforce_sizes=[seq_length],  # ensure at least the max seq length is sampled
             pad_multiple=64,
-            truncation=True,
         )
     else:
         prompts_and_sizes = sample_sharegpt_requests(
@@ -332,16 +331,9 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, seed=0):
         )
 
     prompt_list = []
-    size_list = []
-    for prompt, size in prompts_and_sizes:
-        encoded = tokenizer.encode(prompt, return_tensors="pt").squeeze(0)
-        if size > seq_length:
-            encoded = encoded[:seq_length]
-        
-        size_list.append(encoded.size(0))
-        prompt_list.append(encoded)
+    for prompt, _ in prompts_and_sizes:
+        prompt_list.append(tokenizer.encode(prompt, return_tensors="pt").squeeze(0))
 
-    dprint(f"found prompts with sizes: {size_list}")
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
     return input_ids, extra_kwargs
 
@@ -540,7 +532,12 @@ def test_common_shapes(
     # prepare input_ids
     input_ids, extra_kwargs = __prepare_inputs(batch_size, seq_length, tokenizer)
     extra_kwargs["attn_name"] = ATTN_NAME
-    if "paged" in ATTN_NAME and "ibm-granite/granite-3.3-8b-instruct" in model_path and USE_DISTRIBUTED and dist.get_world_size() == 4:
+    if (
+        "paged" in ATTN_NAME
+        and "ibm-granite/granite-3.3-8b-instruct" in model_path
+        and USE_DISTRIBUTED
+        and dist.get_world_size() == 4
+    ):
         extra_kwargs["_kvcache_num_blocks_hint"] = 2080
 
     # warmup aiu model
@@ -634,7 +631,11 @@ def test_common_shapes(
                     batch_size, seq_length, tokenizer, seed=i
                 )
                 extra_kwargs["attn_name"] = ATTN_NAME
-                if "ibm-granite/granite-3.3-8b-instruct" in model_path and USE_DISTRIBUTED and dist.get_world_size() == 4:
+                if (
+                    "ibm-granite/granite-3.3-8b-instruct" in model_path
+                    and USE_DISTRIBUTED
+                    and dist.get_world_size() == 4
+                ):
                     extra_kwargs["_kvcache_num_blocks_hint"] = 2080
 
                 cpu_validation_info = __load_validation_info(

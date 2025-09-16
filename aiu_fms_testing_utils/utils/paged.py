@@ -350,7 +350,10 @@ def generate(
                 [
                     (
                         [b_seq[0]]
-                        * (max(2 if is_fp8 else 1, max([len(b) for b in block_table])) - len(b_seq))
+                        * (
+                            max(2 if is_fp8 else 1, max([len(b) for b in block_table]))
+                            - len(b_seq)
+                        )
                     )
                     + b_seq
                     for b_seq in block_table
@@ -507,7 +510,12 @@ class ProgramCriteria:
 
 
 def get_programs_prompts(
-    program_criteria_list, multiple, max_batch_size, max_tkv, program_cycles
+    program_criteria_list,
+    multiple,
+    max_batch_size,
+    max_tkv,
+    program_cycles,
+    prioritize_large_batch_sizes=True,
 ):
     program_map = {}
 
@@ -546,6 +554,6 @@ def get_programs_prompts(
 
     # give higher priority to larger batches
     for _, v in program_map.items():
-        v.sort(key=lambda t: t[0], reverse=True)
+        v.sort(key=lambda t: t[0], reverse=prioritize_large_batch_sizes)
 
     return program_map
