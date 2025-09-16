@@ -6,6 +6,8 @@ from fms.utils.generation import pad_input_ids
 import itertools
 import torch
 from torch import distributed as dist
+from torch.fx.experimental import _config as fx_config
+
 from aiu_fms_testing_utils.testing.validation import (
     extract_validation_information,
     LogitsExtractorHook,
@@ -22,6 +24,7 @@ from aiu_fms_testing_utils.utils import (
     warmup_model,
     sample_sharegpt_requests,
 )
+from aiu_fms_testing_utils.utils.paged import KVCACHE_NUM_BLOCKS_HINT
 import json
 from transformers import AutoTokenizer
 
@@ -183,6 +186,7 @@ if compile_dynamic_sendnn:
         ]
     )
     os.environ["VLLM_DT_MAX_BATCH_SIZE"] = str(max(max(common_batch_sizes), 2))
+    fx_config.backed_size_oblivious = True
 
 # thresholds are chosen based on 1024 tokens per sequence
 # 1% error threshold rate between cpu fp32 and cuda fp16
@@ -529,6 +533,13 @@ def test_common_shapes(
     # prepare input_ids
     input_ids, extra_kwargs = __prepare_inputs(batch_size, seq_length, tokenizer)
     extra_kwargs["attn_name"] = ATTN_NAME
+    if (
+        "paged" in ATTN_NAME
+        and "ibm-granite/granite-3.3-8b-instruct" in model_path
+        and USE_DISTRIBUTED
+        and dist.get_world_size() == 4
+    ):
+        extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
 
     # warmup aiu model
     warmup_model(
@@ -621,6 +632,14 @@ def test_common_shapes(
                     batch_size, seq_length, tokenizer, seed=i
                 )
                 extra_kwargs["attn_name"] = ATTN_NAME
+                if (
+                    "paged" in ATTN_NAME
+                    and "ibm-granite/granite-3.3-8b-instruct" in model_path
+                    and USE_DISTRIBUTED
+                    and dist.get_world_size() == 4
+                ):
+                    extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
+
                 cpu_validation_info = __load_validation_info(
                     model_path,
                     batch_size,

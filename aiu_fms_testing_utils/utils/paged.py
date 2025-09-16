@@ -86,13 +86,15 @@ def generate(
     if extra_kwargs is not None:
         kwargs.update(extra_kwargs)
 
+    is_fp8 = "fp8" in kwargs["attn_name"]
     if isinstance(input_ids, torch.Tensor):
         if len(input_ids.shape) == 1:
             input_ids = input_ids.unsqueeze(0)
 
         is_batch = input_ids.shape[0] > 1
-        # our model requires batch dimension
-        if not is_batch:
+        # our model requires batch dimension when running with fp8
+        # this is fixed in torch >= 2.8
+        if is_fp8 and not is_batch:
             input_ids, kwargs = adjust_inputs_to_batch(input_ids, **kwargs)
     else:
         raise TypeError("input_ids must be one of Tensor or List")
@@ -115,7 +117,10 @@ def generate(
     # if we set these variables here, we run the risk of warming up and generating with different sizes
     _MAX_BATCH = int(os.environ["VLLM_DT_MAX_BATCH_SIZE"])
     _MAX_CONTEXT_LENGTH = int(os.environ["VLLM_DT_MAX_CONTEXT_LEN"])
-    NUM_BLOCKS = (_MAX_BATCH * _MAX_CONTEXT_LENGTH) // BLOCK_SIZE
+    # if the user provides a hint to the number of blocks to use, use it directly
+    NUM_BLOCKS = kwargs.get(
+        "_kvcache_num_blocks_hint", (_MAX_BATCH * _MAX_CONTEXT_LENGTH) // BLOCK_SIZE
+    )
 
     if hasattr(model, "head"):
         model_dtype = model.head.weight.dtype
@@ -345,7 +350,10 @@ def generate(
                 [
                     (
                         [b_seq[0]]
-                        * (max(2, max([len(b) for b in block_table])) - len(b_seq))
+                        * (
+                            max(2 if is_fp8 else 1, max([len(b) for b in block_table]))
+                            - len(b_seq)
+                        )
                     )
                     + b_seq
                     for b_seq in block_table
@@ -408,17 +416,19 @@ def generate(
         if post_iteration_hook is not None:
             _logits = logits
             _next_val = next_val
-            # since we cannot handle batch size 1 and mimic with batch size 2, we need to only pass in the first logits/next_val
-            if not is_batch:
+            # since we cannot handle batch size 1 for fp8 and mimic with batch size 2, we need to only pass in the first logits/next_val
+            if is_fp8 and not is_batch:
                 _logits = logits[0].unsqueeze(0)
                 _next_val = _next_val[0].unsqueeze(0)
             _next_val, kwargs = post_iteration_hook(
                 i + prompt_length, _logits, _next_val, kwargs
             )
             # we need to normalize back to batch size 2
-            if not is_batch:
+            if is_fp8 and not is_batch:
                 # we need to do an in-place copy here for the same reason we do in-place copy for injecting tokens
                 next_val.copy_(torch.cat((_next_val, _next_val), dim=0))
+            else:
+                next_val = _next_val
 
         result = torch.cat((result, next_val), dim=-1)
 
@@ -454,7 +464,12 @@ def generate(
     return result
 
 
-VLLM_DT_MAX_BATCH_TKV_LIMIT = 131072
+# this value is default to 2080 to be consistent with vllm for granite 3.3 8b instruct
+KVCACHE_NUM_BLOCKS_HINT = int(
+    os.environ.get("AFTU_PAGED_KVCACHE_NUM_BLOCKS_HINT", 2080)
+)
+
+VLLM_DT_MAX_BATCH_TKV_LIMIT = int(os.environ.get("VLLM_DT_MAX_BATCH_TKV_LIMIT", 131072))
 
 
 class ProgramCriteria:
@@ -468,7 +483,11 @@ class ProgramCriteria:
         self.tkv_granularity = tkv_granularity
 
     def is_possible(self, batch_size, tkv):
-        return batch_size * tkv <= VLLM_DT_MAX_BATCH_TKV_LIMIT
+        return (
+            (batch_size * tkv <= VLLM_DT_MAX_BATCH_TKV_LIMIT)
+            and (batch_size <= self.max_batch)
+            and (tkv <= self.max_tkv)
+        )
 
     def calculate_padding(self, batch_size, tkv):
         min_batch_req = (
@@ -496,7 +515,12 @@ class ProgramCriteria:
 
 
 def get_programs_prompts(
-    program_criteria_list, multiple, max_batch_size, max_tkv, program_cycles
+    program_criteria_list,
+    multiple,
+    max_batch_size,
+    max_tkv,
+    program_cycles,
+    prioritize_large_batch_sizes=True,
 ):
     program_map = {}
 
@@ -515,6 +539,11 @@ def get_programs_prompts(
                         if (
                             resolved_programs[program_index] is None
                             or padding < resolved_programs[program_index][1]
+                            or (
+                                padding == resolved_programs[program_index][1]
+                                and program_criteria.batch_granularity
+                                > resolved_programs[program_index][0].batch_granularity
+                            )
                         ):
                             resolved_programs[program_index] = (
                                 program_criteria,
@@ -527,5 +556,9 @@ def get_programs_prompts(
                     program_map[key].append((batch_size, prompt_len))
                 else:
                     program_map[key] = [(batch_size, prompt_len)]
+
+    # give higher priority to larger batches
+    for _, v in program_map.items():
+        v.sort(key=lambda t: t[0], reverse=prioritize_large_batch_sizes)
 
     return program_map
