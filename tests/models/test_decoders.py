@@ -402,7 +402,7 @@ class PersistentModel:
             self.__maybe_prepare_fp8_weights(model, is_fp8)
 
             model.eval()
-            fx_config.backed_size_oblivious = True
+            fx_config.backed_size_oblivious = compile_dynamic_sendnn
             model.compile(
                 backend="sendnn", options={"sendnn.dynamic": compile_dynamic_sendnn}
             )
