@@ -416,7 +416,7 @@ def generate(
         if post_iteration_hook is not None:
             _logits = logits
             _next_val = next_val
-            # since we cannot handle batch size 1 and mimic with batch size 2, we need to only pass in the first logits/next_val
+            # since we cannot handle batch size 1 for fp8 and mimic with batch size 2, we need to only pass in the first logits/next_val
             if is_fp8 and not is_batch:
                 _logits = logits[0].unsqueeze(0)
                 _next_val = _next_val[0].unsqueeze(0)
@@ -463,6 +463,11 @@ def generate(
         return result, times
     return result
 
+
+# this value is default to 2080 to be consistent with vllm for granite 3.3 8b instruct
+KVCACHE_NUM_BLOCKS_HINT = int(
+    os.environ.get("AFTU_PAGED_KVCACHE_NUM_BLOCKS_HINT", 2080)
+)
 
 VLLM_DT_MAX_BATCH_TKV_LIMIT = int(os.environ.get("VLLM_DT_MAX_BATCH_TKV_LIMIT", 131072))
 

@@ -24,6 +24,7 @@ from aiu_fms_testing_utils.utils import (
     warmup_model,
     sample_sharegpt_requests,
 )
+from aiu_fms_testing_utils.utils.paged import KVCACHE_NUM_BLOCKS_HINT
 import json
 from transformers import AutoTokenizer
 
@@ -538,7 +539,7 @@ def test_common_shapes(
         and USE_DISTRIBUTED
         and dist.get_world_size() == 4
     ):
-        extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+        extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
 
     # warmup aiu model
     warmup_model(
@@ -637,7 +638,7 @@ def test_common_shapes(
                     and USE_DISTRIBUTED
                     and dist.get_world_size() == 4
                 ):
-                    extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+                    extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
 
                 cpu_validation_info = __load_validation_info(
                     model_path,

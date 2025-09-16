@@ -24,13 +24,17 @@ from aiu_fms_testing_utils.testing.validation import (
     top_k_loss_calculator,
 )
 from aiu_fms_testing_utils.utils import (
-    sample_granite_3_3_long_answerable_requests,
+    sample_rag_factoid_requests,
     sample_sharegpt_requests,
     stagger_region,
     warmup_model,
 )
 from aiu_fms_testing_utils.utils.aiu_setup import aiu_dist_setup, dprint, local_rank
-from aiu_fms_testing_utils.utils.paged import ProgramCriteria, get_programs_prompts
+from aiu_fms_testing_utils.utils.paged import (
+    ProgramCriteria,
+    get_programs_prompts,
+    KVCACHE_NUM_BLOCKS_HINT,
+)
 
 parser = argparse.ArgumentParser(
     description="Script which will drive paged programs for debugging"
@@ -167,7 +171,7 @@ DATASET_PATH = args.dataset_path
 save_validation_info_outputs = args.save_validation_info_outputs
 
 if args.dataset_type == "rag_factoid":
-    sampler = sample_granite_3_3_long_answerable_requests
+    sampler = sample_rag_factoid_requests
     allow_truncation = False
 elif args.dataset_type == "sharegpt":
     sampler = sample_sharegpt_requests
@@ -335,7 +339,7 @@ if (
     and USE_DISTRIBUTED
     and dist.get_world_size() == 4
 ):
-    extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+    extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
 warmup_model(
     model,
     input_ids,
@@ -347,6 +351,7 @@ warmup_model(
 
 if USE_DISTRIBUTED:
     # wait for rank0 to be finished as it is the only one generating the criteria json
+    # this is needed since otherwise we may run into a race condition
     torch.distributed.barrier()
 
 with open(args.program_criteria_json_path, "r") as f:
@@ -434,7 +439,8 @@ def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
 
 
 failed_cases = []
-for program_id, valid_prompt in valid_prompts:  # for each program
+# for each program and valid prompt (batch size, sequence length)
+for program_id, valid_prompt in valid_prompts:
     input_ids, extra_kwargs = __prepare_inputs(
         valid_prompt[0], valid_prompt[1], tokenizer, enforce_sizes=[valid_prompt[1]]
     )
@@ -444,7 +450,7 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         and USE_DISTRIBUTED
         and dist.get_world_size() == 4
     ):
-        extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+        extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
 
     if local_rank == 0:
         dprint(f"*** testing program {program_id} ***")

@@ -468,7 +468,7 @@ def __sample_requests(
     return filtered_dataset
 
 
-def sample_granite_3_3_long_answerable_requests(
+def sample_rag_factoid_requests(
     dataset_path: str,
     num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
