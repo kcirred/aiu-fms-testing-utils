@@ -4,6 +4,7 @@ import json
 import os
 import random
 import time
+from itertools import dropwhile
 
 import torch
 from fms.models import get_model
@@ -46,7 +47,7 @@ parser.add_argument(
     nargs="*",
     default=[],
     help="""
-    The list of programs to run. This would take a list where each element would be one of program_id OR <program_id>:<min_batch>,<min_prompt_length>. 
+    The list of programs to run. This would take a list where each element would be one of program_id OR <program_id>:<min_batch>,<min_prompt_length>.
     If program_id is specified any prompt that would result in this program would be selected.
     If <program_id>:<min_batch>,<min_prompt_length> is specified, then with the given program_id, select a prompt that satisfies min_batch and min_prompt_length (if none exists, a message will be printed to warn the user)
     If this list is empty, each program will be run once with any prompt that would result in this program being selected.
@@ -565,8 +566,15 @@ for program_id, valid_prompt in valid_prompts:
                     aiu_tokens_generated = [
                         t.item() for t in test_sentence[-max_new_tokens:]
                     ]
+                    tokens_prompt_without_pad = list(
+                        dropwhile(lambda x: x == tokenizer.pad_token_id, tokens_prompt)
+                    )
+                    prompt_length = len(
+                        [token_id for token_id in tokens_prompt_without_pad]
+                    )
+                    dprint(f"Prompt Length: {prompt_length}")
                     dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
-                    dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt)}")
+                    dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt_without_pad)}")
                     dprint(f"CPU tokens:\n{cpu_tokens_generated}")
                     dprint(f"AIU tokens:\n{aiu_tokens_generated}")
                     dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens_generated)}")
