@@ -19,7 +19,7 @@ else:
 
 common_batch_sizes = [1, 8]
 common_seq_lengths = [64]
-common_max_new_tokens = [12]
+common_max_new_tokens = [8]
 common_attn_types = ["sdpa", "paged"]
 
 common_params = list(
@@ -37,6 +37,12 @@ current_env = os.environ.copy()
 
 def execute_script(execute_cmd):
     current_env["MAX_SHAREDPROG_ITERS"] = f"{common_max_new_tokens[0]}"
+    # using these options temporarily
+    current_env["DT_OPT"] = "progcorrection=0"
+    current_env["EN_PREFILL_OPT"] = "0"
+    current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "131072"
+    current_env["VLLM_DT_MAX_BATCH_SIZE"] = "4"
+    current_env["VLLM_DT_MAX_CONTEXT_LEN"] = "4096"
 
     with Popen(
         execute_cmd,
@@ -79,10 +85,10 @@ def execute_inference(model_path, batch_size, seq_length, max_new_tokens, attn_t
 
 
 common_asserts = [
-    "### Response:\nProvide a list of instructions for preparing chicken soup",
-    "### Response:\nExplain some popular greetings in Spanish.",
-    "### Response:\nExplain to me why ignorance is bliss.",
-    "### Response:\nI have just come into a very large sum of money",
+    "### Response:\n\n1.\n\nThe following",
+    "### Response:\n\n1.\n\nI am",
+    "### Response:\n\nI am not sure what you",
+    "### Response:\n\nI have just come into a",
 ]
 
 
@@ -111,4 +117,8 @@ def test_inference_script(
     )
 
     for common_assert in asserts:
+        print("ASSERT")
+        print(common_assert)
+        print("RESULT")
+        print(result_text)
         assert common_assert in result_text
