@@ -333,6 +333,7 @@ def generate(
             # mask is no longer used here
             kwargs["mask"] = None
             kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
+            kwargs["last_n_tokens"] = 1
 
             # we no longer have a global pos_i, each sequence has its own pos_i
             slot_mapping = []
