@@ -15,6 +15,7 @@ from aiu_fms_testing_utils.utils.aiu_setup import dprint, rank, local_rank, worl
 import numpy as np
 import torch
 from torch import distributed as dist
+from torch.fx.experimental import _config as fx_config
 from fms.models import get_model, register_model
 from fms.models.llama import LLaMAConfig, _llama_factory_factory
 from fms.utils import generation
@@ -587,6 +588,7 @@ dprint(f"loading complete, took {loading_model_time:.3f}s")
 
 if args.compile:
     dprint("compiling model")
+    fx_config.backed_size_oblivious = True
     if is_aiu_backend:
         model.compile(
             backend="sendnn", options={"sendnn.dynamic": args.compile_dynamic_sendnn}
@@ -730,9 +732,6 @@ if "paged" in attn_name:
         ),
     )
     os.environ.setdefault("VLLM_DT_MAX_BATCH_SIZE", str(max(ids.shape[0], 2)))
-    if ((args.model_path is not None and "ibm-granite/granite-3.3-8b-instruct" in args.model_path) or (args.variant is not None and "ibm-granite/granite-3.3-8b-instruct" in args.variant)) \
-        and args.distributed and dist.get_world_size() == 4:
-        extra_generation_kwargs["_kvcache_num_blocks_hint"] = 2080
 
 
 def print_result(result, result_idx: int):

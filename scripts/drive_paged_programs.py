@@ -1,28 +1,41 @@
-import time
+import argparse
 import datetime
-from aiu_fms_testing_utils.utils.paged import ProgramCriteria, get_programs_prompts
-import torch
+import json
 import os
 import random
+import time
+from itertools import dropwhile
+
+import torch
 from fms.models import get_model
 from fms.utils.generation import pad_input_ids
-from aiu_fms_testing_utils.utils.aiu_setup import aiu_dist_setup, local_rank, dprint
+from torch import distributed as dist
+from torch.fx.experimental import _config as fx_config
+from transformers import AutoTokenizer
+
 from aiu_fms_testing_utils.testing.validation import (
-    extract_validation_information,
-    LogitsExtractorHook,
     GoldenTokenHook,
+    LogitsExtractorHook,
     capture_level_1_metrics,
+    extract_validation_information,
     filter_failed_level_1_cases,
     find_validation_info_path,
     get_validation_info_path,
     load_validation_information,
     top_k_loss_calculator,
 )
-from torch import distributed as dist
-from aiu_fms_testing_utils.utils import sample_sharegpt_requests, warmup_model, stagger_region, sample_granite_3_3_long_answerable_requests
-from transformers import AutoTokenizer
-import json
-import argparse
+from aiu_fms_testing_utils.utils import (
+    sample_rag_factoid_requests,
+    sample_sharegpt_requests,
+    stagger_region,
+    warmup_model,
+)
+from aiu_fms_testing_utils.utils.aiu_setup import aiu_dist_setup, dprint, local_rank
+from aiu_fms_testing_utils.utils.paged import (
+    ProgramCriteria,
+    get_programs_prompts,
+    KVCACHE_NUM_BLOCKS_HINT,
+)
 
 parser = argparse.ArgumentParser(
     description="Script which will drive paged programs for debugging"
@@ -34,7 +47,7 @@ parser.add_argument(
     nargs="*",
     default=[],
     help="""
-    The list of programs to run. This would take a list where each element would be one of program_id OR <program_id>:<min_batch>,<min_prompt_length>. 
+    The list of programs to run. This would take a list where each element would be one of program_id OR <program_id>:<min_batch>,<min_prompt_length>.
     If program_id is specified any prompt that would result in this program would be selected.
     If <program_id>:<min_batch>,<min_prompt_length> is specified, then with the given program_id, select a prompt that satisfies min_batch and min_prompt_length (if none exists, a message will be printed to warn the user)
     If this list is empty, each program will be run once with any prompt that would result in this program being selected.
@@ -79,7 +92,7 @@ parser.add_argument(
     type=str,
     choices=["rag_factoid", "sharegpt"],
     default="sharegpt",
-    help="selects the correct dataset type for sampling. Must be one of rag_factoid or sharegpt"
+    help="selects the correct dataset type for sampling. Must be one of rag_factoid or sharegpt",
 )
 parser.add_argument(
     "--test_type",
@@ -137,12 +150,17 @@ parser.add_argument(
     "--validation_info_outputs_dir",
     type=str,
     default="/home/senuser/models/validation_info",
-    help="path to directory containing validation info outputs"
+    help="path to directory containing validation info outputs",
 )
 parser.add_argument(
     "--save_validation_info_outputs",
     action="store_true",
     help="set to true to save cpu validation outputs for later consumption",
+)
+parser.add_argument(
+    "--prioritize_large_batch_sizes",
+    action="store_true",
+    help="set to true if you would like to prioritize large batch sizes",
 )
 
 args = parser.parse_args()
@@ -154,7 +172,7 @@ DATASET_PATH = args.dataset_path
 save_validation_info_outputs = args.save_validation_info_outputs
 
 if args.dataset_type == "rag_factoid":
-    sampler = sample_granite_3_3_long_answerable_requests
+    sampler = sample_rag_factoid_requests
     allow_truncation = False
 elif args.dataset_type == "sharegpt":
     sampler = sample_sharegpt_requests
@@ -207,7 +225,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
         seq_length * 2 if allow_truncation else seq_length,
         seed,
         enforce_sizes=enforce_sizes,
-        truncation=allow_truncation
+        truncation=allow_truncation,
     )
     end = time.time()
     if local_rank == 0:
@@ -234,8 +252,15 @@ def __maybe_prepare_fp8_weights(model_in, is_fp8):
                     )
                 param.data = param.data.to(dtype=torch.float16)
 
+
 def __load_validation_info(
-    model_variant, batch_size, seq_length, max_new_tokens, tokenizer, seed, attn_type: str
+    model_variant,
+    batch_size,
+    seq_length,
+    max_new_tokens,
+    tokenizer,
+    seed,
+    attn_type: str,
 ):
     full_path = find_validation_info_path(
         args.validation_info_outputs_dir,
@@ -253,6 +278,7 @@ def __load_validation_info(
         return load_validation_information(full_path, "logits", batch_size, tokenizer)
     else:
         return None
+
 
 model_path_kwargs = {}
 if os.path.exists(model_variant):
@@ -287,6 +313,7 @@ with stagger_region(args.stagger_load):
     )
 
 model.eval()
+fx_config.backed_size_oblivious = True
 model.compile(backend="sendnn", options={"sendnn.dynamic": True})
 
 __maybe_prepare_fp8_weights(model, is_fp8)
@@ -306,12 +333,14 @@ if not args.skip_validation:
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
 
 # warmup with any input so compiler produces criteria json
-input_ids, extra_kwargs = __prepare_inputs(
-    2, max_tkv, tokenizer
-)
+input_ids, extra_kwargs = __prepare_inputs(2, max_tkv, tokenizer)
 extra_kwargs["attn_name"] = ATTN_NAME
-if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
-    extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+if (
+    "granite-3.3-8b-instruct" in model_variant
+    and USE_DISTRIBUTED
+    and dist.get_world_size() == 4
+):
+    extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
 warmup_model(
     model,
     input_ids,
@@ -320,6 +349,11 @@ warmup_model(
     stagger_update_lazyhandle=args.stagger_update_lazyhandle,
     **extra_kwargs,
 )
+
+if USE_DISTRIBUTED:
+    # wait for rank0 to be finished as it is the only one generating the criteria json
+    # this is needed since otherwise we may run into a race condition
+    torch.distributed.barrier()
 
 with open(args.program_criteria_json_path, "r") as f:
     program_criteria_json_list = json.load(f)["programs"]
@@ -360,6 +394,7 @@ program_map = get_programs_prompts(
     max_batch_size=max_batch_size,
     max_tkv=max_tkv,
     program_cycles=max_new_tokens,
+    prioritize_large_batch_sizes=args.prioritize_large_batch_sizes,
 )
 for v in program_map.values():
     random.Random(42).shuffle(v)
@@ -368,15 +403,20 @@ for v in program_map.values():
 valid_prompts = []
 for program_id, min_batch_size, min_prompt_length in programs:
     found_valid_prompt = False
-    for valid_prompt_shape in program_map.get((program_criteria_list[program_id],), []):
-        # make sure the criteria for min batch and min prompt is satisfied
-        if (
-            valid_prompt_shape[0] >= min_batch_size
-            and valid_prompt_shape[1] >= min_prompt_length
-        ):
-            valid_prompts.append((program_id, valid_prompt_shape))
-            found_valid_prompt = True
-            break
+    valid_map_keys = [
+        k for k in program_map.keys() if k[0] == program_criteria_list[program_id]
+    ]
+
+    if len(valid_map_keys) > 0:
+        for valid_prompt_shape in program_map.get(valid_map_keys[0], []):
+            # make sure the criteria for min batch and min prompt is satisfied
+            if (
+                valid_prompt_shape[0] >= min_batch_size
+                and valid_prompt_shape[1] >= min_prompt_length
+            ):
+                valid_prompts.append((program_id, valid_prompt_shape))
+                found_valid_prompt = True
+                break
 
     if not found_valid_prompt:
         if local_rank == 0:
@@ -400,13 +440,18 @@ def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
 
 
 failed_cases = []
-for program_id, valid_prompt in valid_prompts:  # for each program
+# for each program and valid prompt (batch size, sequence length)
+for program_id, valid_prompt in valid_prompts:
     input_ids, extra_kwargs = __prepare_inputs(
         valid_prompt[0], valid_prompt[1], tokenizer, enforce_sizes=[valid_prompt[1]]
     )
     extra_kwargs["attn_name"] = ATTN_NAME
-    if "granite-3.3-8b-instruct" in model_variant and USE_DISTRIBUTED and dist.get_world_size() == 4:
-        extra_kwargs["_kvcache_num_blocks_hint"] = 2080
+    if (
+        "granite-3.3-8b-instruct" in model_variant
+        and USE_DISTRIBUTED
+        and dist.get_world_size() == 4
+    ):
+        extra_kwargs["_kvcache_num_blocks_hint"] = KVCACHE_NUM_BLOCKS_HINT
 
     if local_rank == 0:
         dprint(f"*** testing program {program_id} ***")
@@ -417,7 +462,13 @@ for program_id, valid_prompt in valid_prompts:  # for each program
     if not args.skip_validation:
         # attempt to load the cpu validation info if it is already computed
         cpu_validation_info = __load_validation_info(
-            model_variant, valid_prompt[0], valid_prompt[1], max_new_tokens, tokenizer, seed=0, attn_type=ATTN_NAME
+            model_variant,
+            valid_prompt[0],
+            valid_prompt[1],
+            max_new_tokens,
+            tokenizer,
+            seed=0,
+            attn_type=ATTN_NAME,
         )
         # if the cpu validation info is not yet computed, compute it
         if cpu_validation_info is None:
@@ -506,15 +557,24 @@ for program_id, valid_prompt in valid_prompts:  # for each program
                         aiu_validation_info.get_info("tokens"),
                     )
                 ):
-                    tokens_prompt = [t.item() for t in reference_sentence[:-max_new_tokens]]
+                    tokens_prompt = [
+                        t.item() for t in reference_sentence[:-max_new_tokens]
+                    ]
                     cpu_tokens_generated = [
                         t.item() for t in reference_sentence[-max_new_tokens:]
                     ]
                     aiu_tokens_generated = [
                         t.item() for t in test_sentence[-max_new_tokens:]
                     ]
+                    tokens_prompt_without_pad = list(
+                        dropwhile(lambda x: x == tokenizer.pad_token_id, tokens_prompt)
+                    )
+                    prompt_length = len(
+                        [token_id for token_id in tokens_prompt_without_pad]
+                    )
+                    dprint(f"Prompt Length: {prompt_length}")
                     dprint(f"For Program {program_id} in sentence {sentence_idx + 1}:")
-                    dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt)}")
+                    dprint(f"Prompt:\n{tokenizer.decode(tokens_prompt_without_pad)}")
                     dprint(f"CPU tokens:\n{cpu_tokens_generated}")
                     dprint(f"AIU tokens:\n{aiu_tokens_generated}")
                     dprint(f"CPU output:\n{tokenizer.decode(cpu_tokens_generated)}")
@@ -533,7 +593,9 @@ for program_id, valid_prompt in valid_prompts:  # for each program
         )
 
         if local_rank == 0:
-            for sentence_idx, test_sentence in enumerate(aiu_validation_info.get_info("tokens")):
+            for sentence_idx, test_sentence in enumerate(
+                aiu_validation_info.get_info("tokens")
+            ):
                 tokens_prompt = [t.item() for t in test_sentence[:-max_new_tokens]]
                 aiu_tokens_generated = [
                     t.item() for t in test_sentence[-max_new_tokens:]

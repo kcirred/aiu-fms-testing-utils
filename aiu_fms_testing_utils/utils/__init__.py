@@ -19,6 +19,7 @@ import math
 import contextlib
 import warnings
 
+
 @contextlib.contextmanager
 def stagger_region(limit: int):
     """
@@ -76,8 +77,9 @@ def warmup_model(
     _max_new_tokens = max_new_tokens
     if compile_dynamic_sendnn:
         _max_new_tokens = 2
-        # always warmup with batch size 2 when using attn_type=paged
-        if "paged" in attn_name:
+        # When performing fp8 paged attention, we must pad to batch size 2
+        # this is fixed in torch >= 2.8
+        if attn_name == "spyre_paged_attn_fp8":
             _warmup_input_ids, _extra_kwargs = adjust_inputs_to_batch(
                 input_ids,
                 **extra_kwargs,
@@ -237,7 +239,6 @@ def _remove_list_from_list(main_list, list_to_remove):
             main_list.remove(item)
     return main_list
 
-__cached_encoded_datasets = {}
 
 # Because we now require encoding the dataset, cache the datasets to make
 # second sample request quick
@@ -467,7 +468,7 @@ def __sample_requests(
     return filtered_dataset
 
 
-def sample_granite_3_3_long_answerable_requests(
+def sample_rag_factoid_requests(
     dataset_path: str,
     num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
@@ -484,11 +485,10 @@ def sample_granite_3_3_long_answerable_requests(
 
     dataset = []
     # Load the dataset.
-    with open(dataset_path, "r", encoding='utf-8') as f:
+    with open(dataset_path, "r", encoding="utf-8") as f:
         for line in f:
             dataset.append(line)
 
-    
     return __sample_requests(
         dataset,
         num_requests,
@@ -500,7 +500,7 @@ def sample_granite_3_3_long_answerable_requests(
         enforce_sizes,
         truncation,
         pad_multiple,
-        _cached_dataset_key=dataset_path
+        _cached_dataset_key=dataset_path,
     )
 
 
@@ -518,16 +518,23 @@ def sample_sharegpt_requests(
 ) -> List[Tuple[str, int]]:
     if not os.path.exists(dataset_path):
         print("downloading share-gpt dataset as it does not exist")
-        __download_file(
-            "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json",
-            dataset_path,
-        )
+        is_distributed_initialized = torch.distributed.is_initialized()
+        if not is_distributed_initialized or rank < 1:
+            __download_file(
+                "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json",
+                dataset_path,
+            )
+        else:
+            print("waiting for rank0 to complete download")
+
+        if is_distributed_initialized:
+            torch.distributed.barrier()
 
     if enforce_sizes is None:
         enforce_sizes = []
 
     # Load the dataset.
-    with open(dataset_path, encoding="utf-8") as f:
+    with open(dataset_path, "r", encoding="utf-8") as f:
         dataset = json.load(f)
     # Filter out the conversations with less than 2 turns.
     dataset = [data for data in dataset if len(data["conversations"]) >= 2]
