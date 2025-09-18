@@ -246,7 +246,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
 
     if len(prompt_list) < batch_size:
         dprint(
-            f"You requested {batch_size} prompts but we were only able to get {len(prompt_list)} valid prompts. We will be repeating requests."
+            f"You requested {batch_size} prompts but we were only able to get {len(prompt_list)} valid prompts. We will be repeating the first prompt."
         )
         prompt_list = [prompt_list[0]] * (batch_size - len(prompt_list)) + prompt_list
 
