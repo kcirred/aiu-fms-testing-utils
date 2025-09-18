@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import itertools
 import json
 import os
 import random
@@ -162,6 +163,11 @@ parser.add_argument(
     action="store_true",
     help="set to true if you would like to prioritize large batch sizes",
 )
+parser.add_argument(
+    "--enforce_homogeneous_prompt_programs",
+    action="store_true",
+    help="set to true ensure that all prompts hit the same prompt program for a given test",
+)
 
 args = parser.parse_args()
 
@@ -237,6 +243,12 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
             assert allow_truncation
             encoded = encoded[:seq_length]
         prompt_list.append(encoded)
+
+    if len(prompt_list) < batch_size:
+        dprint(
+            f"You requested {batch_size} prompts but we were only able to get {len(prompt_list)} valid prompts. We will be repeating the first prompt."
+        )
+        prompt_list = [prompt_list[0]] * (batch_size - len(prompt_list)) + prompt_list
 
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
     return input_ids, extra_kwargs
@@ -442,8 +454,22 @@ def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
 failed_cases = []
 # for each program and valid prompt (batch size, sequence length)
 for program_id, valid_prompt in valid_prompts:
+    # when we enforce homogeneous prompt programs, we will cycle through all sizes between the min of a program and the valid prompt sequence length
+    # if there does not exist enough sequence sizes between this range, we will cycle back to the beginning
+    # in the event we don't have enough sequences that satisfy the enforce_sizes, we will repeat sequences and warn the user
+    enforce_sizes = [valid_prompt[1]]
+    if args.enforce_homogeneous_prompt_programs:
+        # this will get the number of bits for the sequence length and shift to get the power of 2 that is less than or equal to the sequence length
+        tkv_cutoff = 1 << (valid_prompt[1].bit_length() - 1)
+        possible_seq_lengths = [_ for _ in range(tkv_cutoff, valid_prompt[1], 64)]
+        # favor sequences that are close to the valid prompt length
+        possible_seq_lengths.reverse()
+        enforce_sizes = enforce_sizes + list(
+            itertools.islice(itertools.cycle(possible_seq_lengths), valid_prompt[0] - 1)
+        )
+
     input_ids, extra_kwargs = __prepare_inputs(
-        valid_prompt[0], valid_prompt[1], tokenizer, enforce_sizes=[valid_prompt[1]]
+        valid_prompt[0], valid_prompt[1], tokenizer, enforce_sizes=enforce_sizes
     )
     extra_kwargs["attn_name"] = ATTN_NAME
     if (
