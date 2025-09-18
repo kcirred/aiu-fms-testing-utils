@@ -455,7 +455,7 @@ failed_cases = []
 # for each program and valid prompt (batch size, sequence length)
 for program_id, valid_prompt in valid_prompts:
     # when we enforce homogeneous prompt programs, we will cycle through all sizes between the min of a program and the valid prompt sequence length
-    # if there does not exist enough sequenece sizes between this range, we will cycle back to the beginning
+    # if there does not exist enough sequence sizes between this range, we will cycle back to the beginning
     # in the event we don't have enough sequences that satisfy the enforce_sizes, we will repeat sequences and warn the user
     enforce_sizes = [valid_prompt[1]]
     if args.enforce_homogeneous_prompt_programs:
