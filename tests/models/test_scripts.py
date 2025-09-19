@@ -36,9 +36,7 @@ current_env = os.environ.copy()
 
 
 def execute_script(execute_cmd):
-    current_env["MAX_SHAREDPROG_ITERS"] = f"{common_max_new_tokens[0]}"
     # using these options temporarily
-    current_env["DT_OPT"] = "progcorrection=0"
     current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "16384"
     current_env["VLLM_DT_MAX_BATCH_SIZE"] = "4"
     current_env["VLLM_DT_MAX_CONTEXT_LEN"] = "4096"
@@ -116,8 +114,4 @@ def test_inference_script(
     )
 
     for common_assert in asserts:
-        print("ASSERT")
-        print(common_assert)
-        print("RESULT")
-        print(result_text)
         assert common_assert in result_text
