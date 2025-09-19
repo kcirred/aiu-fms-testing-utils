@@ -21,6 +21,7 @@ common_batch_sizes = [1, 4]
 common_seq_lengths = [64]
 common_max_new_tokens = [8]
 common_attn_types = ["sdpa", "paged"]
+common_allow_symbolic_shapes = [None]
 
 common_params = list(
     itertools.product(
@@ -29,6 +30,7 @@ common_params = list(
         common_seq_lengths,
         common_max_new_tokens,
         common_attn_types,
+        common_allow_symbolic_shapes,
     )
 )
 
@@ -56,11 +58,16 @@ def execute_script(execute_cmd):
             raise Exception(error)
 
 
-def execute_inference(model_path, batch_size, seq_length, max_new_tokens, attn_type):
+def execute_inference(
+    model_path, batch_size, seq_length, max_new_tokens, attn_type, allow_symbolic_shapes
+):
     extra_args = []
     if attn_type == "paged":
-        extra_args.append("--compile_dynamic_sendnn")
+        # paged needs symbolic shapes
         extra_args.append("--attention_type=paged")
+
+    if allow_symbolic_shapes is not None and allow_symbolic_shapes:
+        extra_args.append("--compile_dynamic_sendnn")
 
     execute_cmd = [
         "python3",
@@ -100,17 +107,35 @@ common_inference_params = [
     common_param + (__repeat_batch_asserts(common_param[1]),)
     for common_param in common_params
 ]
+# adding special case where we allow symbolic shapes for batch size 1 using sdpa
+common_inference_params.append(
+    (common_model_paths[0], 1, 64, 8, "sdpa", [common_asserts[0]], True)
+)
 
 
 @pytest.mark.parametrize(
-    "model_path,batch_size,seq_length,max_new_tokens,attn_type,asserts",
+    "model_path,batch_size,seq_length,max_new_tokens,attn_type,asserts,allow_symbolic_shapes",
     common_inference_params,
 )
 def test_inference_script(
-    model_path, batch_size, seq_length, max_new_tokens, attn_type, asserts
+    model_path,
+    batch_size,
+    seq_length,
+    max_new_tokens,
+    attn_type,
+    asserts,
+    allow_symbolic_shapes,
 ):
+    # force symbolic shapes if paged
+    if "paged" in attn_type:
+        allow_symbolic_shapes = True
     result_text = execute_inference(
-        model_path, batch_size, seq_length, max_new_tokens, attn_type
+        model_path,
+        batch_size,
+        seq_length,
+        max_new_tokens,
+        attn_type,
+        allow_symbolic_shapes,
     )
 
     for common_assert in asserts:

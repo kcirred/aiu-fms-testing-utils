@@ -588,7 +588,7 @@ dprint(f"loading complete, took {loading_model_time:.3f}s")
 
 if args.compile:
     dprint("compiling model")
-    fx_config.backed_size_oblivious = True
+    fx_config.backed_size_oblivious = "paged" in attn_name
     if is_aiu_backend:
         model.compile(
             backend="sendnn", options={"sendnn.dynamic": args.compile_dynamic_sendnn}
