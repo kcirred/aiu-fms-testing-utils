@@ -38,11 +38,6 @@ current_env = os.environ.copy()
 
 
 def execute_script(execute_cmd):
-    # using these options temporarily
-    current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "16384"
-    current_env["VLLM_DT_MAX_BATCH_SIZE"] = "4"
-    current_env["VLLM_DT_MAX_CONTEXT_LEN"] = "4096"
-
     with Popen(
         execute_cmd,
         stdin=PIPE,
@@ -65,6 +60,15 @@ def execute_inference(
     if attn_type == "paged":
         # paged needs symbolic shapes
         extra_args.append("--attention_type=paged")
+        # using these options temporarily
+        current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "16384"
+        current_env["VLLM_DT_MAX_BATCH_SIZE"] = "4"
+        current_env["VLLM_DT_MAX_CONTEXT_LEN"] = "4096"
+    else:
+        # added in case symbolic shapes used with sdpa
+        current_env["_PROMPT_LEN"] = "64"
+        current_env["_MAX_DECODE_TOKENS"] = "8"
+        current_env["_MAX_CONTEXT_LEN"] = "71"
 
     if allow_symbolic_shapes is not None and allow_symbolic_shapes:
         extra_args.append("--compile_dynamic_sendnn")
