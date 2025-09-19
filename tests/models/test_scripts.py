@@ -17,7 +17,7 @@ if common_model_paths == "":
 else:
     common_model_paths = common_model_paths.split(",")
 
-common_batch_sizes = [1, 8]
+common_batch_sizes = [1, 4]
 common_seq_lengths = [64]
 common_max_new_tokens = [8]
 common_attn_types = ["sdpa", "paged"]
@@ -39,8 +39,7 @@ def execute_script(execute_cmd):
     current_env["MAX_SHAREDPROG_ITERS"] = f"{common_max_new_tokens[0]}"
     # using these options temporarily
     current_env["DT_OPT"] = "progcorrection=0"
-    current_env["EN_PREFILL_OPT"] = "0"
-    current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "131072"
+    current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "16384"
     current_env["VLLM_DT_MAX_BATCH_SIZE"] = "4"
     current_env["VLLM_DT_MAX_CONTEXT_LEN"] = "4096"
 
