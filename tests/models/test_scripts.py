@@ -21,7 +21,6 @@ common_batch_sizes = [1, 4]
 common_seq_lengths = [64]
 common_max_new_tokens = [8]
 common_attn_types = ["sdpa", "paged"]
-common_allow_symbolic_shapes = [None]
 
 common_params = list(
     itertools.product(
@@ -30,7 +29,6 @@ common_params = list(
         common_seq_lengths,
         common_max_new_tokens,
         common_attn_types,
-        common_allow_symbolic_shapes,
     )
 )
 
@@ -108,7 +106,7 @@ def __repeat_batch_asserts(bs: int) -> list[str]:
 # add the asserts based on batch size
 # for batches greater than common_asserts, repeat common_asserts since this follows inference behavior
 common_inference_params = [
-    common_param + (__repeat_batch_asserts(common_param[1]),)
+    common_param + (__repeat_batch_asserts(common_param[1]), None)
     for common_param in common_params
 ]
 # adding special case where we allow symbolic shapes for batch size 1 using sdpa
