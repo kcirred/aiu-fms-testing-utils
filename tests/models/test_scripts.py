@@ -59,14 +59,14 @@ def execute_inference(
         # paged needs symbolic shapes
         extra_args.append("--attention_type=paged")
         # using these options temporarily
-        current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "16384"
-        current_env["VLLM_DT_MAX_BATCH_SIZE"] = "4"
-        current_env["VLLM_DT_MAX_CONTEXT_LEN"] = "4096"
+        current_env.setdefault("VLLM_DT_MAX_BATCH_TKV_LIMIT", "16384")
+        current_env.setdefault("VLLM_DT_MAX_BATCH_SIZE", "4")
+        current_env.setdefault("VLLM_DT_MAX_CONTEXT_LEN", "4096")
     else:
         # added in case symbolic shapes used with sdpa
-        current_env["_PROMPT_LEN"] = "64"
-        current_env["_MAX_DECODE_TOKENS"] = "8"
-        current_env["_MAX_CONTEXT_LEN"] = "71"
+        current_env.setdefault("_PROMPT_LEN", "64")
+        current_env.setdefault("_MAX_DECODE_TOKENS", "8")
+        current_env.setdefault("_MAX_CONTEXT_LEN", "71")
 
     if allow_symbolic_shapes is not None and allow_symbolic_shapes:
         extra_args.append("--compile_dynamic_sendnn")
