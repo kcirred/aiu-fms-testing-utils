@@ -385,18 +385,17 @@ with open(args.program_criteria_json_path, "r") as f:
     for program_str in args.programs:
         enforce_prompt_split = program_str.split(":")
         if len(enforce_prompt_split) == 1:
-            programs.append(
-                (int(enforce_prompt_split[0]), 0, 0)
-            )  # this will always satisfy
+            programs.append((enforce_prompt_split[0], 0, 0))  # this will always satisfy
         else:
-            program_id = int(enforce_prompt_split[0])
             enforce_batch_size, enforce_prompt_length = (
                 int(_) for _ in enforce_prompt_split[1].split(",")
             )
-            programs.append((program_id, enforce_batch_size, enforce_prompt_length))
+            programs.append(
+                (enforce_prompt_split[0], enforce_batch_size, enforce_prompt_length)
+            )
 
     if len(programs) == 0:
-        programs = [(p.program_id, 0, 0) for p in program_criteria_list]
+        programs = [(str(p.program_id), 0, 0) for p in program_criteria_list]
 
 
 # FIXME: filter condition for this on prompt and batch
@@ -415,18 +414,33 @@ for v in program_map.values():
 valid_prompts = []
 for program_id, min_batch_size, min_prompt_length in programs:
     found_valid_prompt = False
-    valid_map_keys = [
-        k for k in program_map.keys() if k[0] == program_criteria_list[program_id]
-    ]
+    filtered_program_map = program_map
+    if program_id.isnumeric():
+        program_id = int(program_id)
+        filtered_program_map = {
+            k: v
+            for k, v in program_map.items()
+            if k[0] == program_criteria_list[program_id]
+        }
 
-    if len(valid_map_keys) > 0:
-        for valid_prompt_shape in program_map.get(valid_map_keys[0], []):
+    used_keys = {}
+    # for each program, we need to check if we have a shape that satisfies the --programs request
+    for program_seq_key, valid_prompt_shapes in program_map.items():
+        # if ? or numeric => we need to check if we have found at least one valid key to stop
+        if (program_id == "?" or program_id.isnumeric()) and len(used_keys) > 0:
+            break
+        # if * => we need to see if we have found the first key to see if we should skip
+        elif program_id == "*" and program_seq_key[0] in used_keys:
+            continue
+
+        for valid_prompt_shape in valid_prompt_shapes:
             # make sure the criteria for min batch and min prompt is satisfied
             if (
                 valid_prompt_shape[0] >= min_batch_size
                 and valid_prompt_shape[1] >= min_prompt_length
             ):
-                valid_prompts.append((program_id, valid_prompt_shape))
+                valid_prompts.append((program_seq_key[0], valid_prompt_shape))
+                used_keys.add(program_seq_key[0])
                 found_valid_prompt = True
                 break
 
