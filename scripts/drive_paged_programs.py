@@ -416,16 +416,15 @@ for program_id, min_batch_size, min_prompt_length in programs:
     found_valid_prompt = False
     filtered_program_map = program_map
     if program_id.isnumeric():
-        program_id = int(program_id)
         filtered_program_map = {
             k: v
             for k, v in program_map.items()
-            if k[0] == program_criteria_list[program_id]
+            if k[0] == program_criteria_list[int(program_id)]
         }
 
-    used_keys = {}
+    used_keys = set()
     # for each program, we need to check if we have a shape that satisfies the --programs request
-    for program_seq_key, valid_prompt_shapes in program_map.items():
+    for program_seq_key, valid_prompt_shapes in filtered_program_map.items():
         # if ? or numeric => we need to check if we have found at least one valid key to stop
         if (program_id == "?" or program_id.isnumeric()) and len(used_keys) > 0:
             break
