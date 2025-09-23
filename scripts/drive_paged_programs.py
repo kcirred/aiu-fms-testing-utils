@@ -26,6 +26,7 @@ from aiu_fms_testing_utils.testing.validation import (
     top_k_loss_calculator,
 )
 from aiu_fms_testing_utils.utils import (
+    get_pad_size,
     sample_rag_factoid_requests,
     sample_sharegpt_requests,
     stagger_region,
@@ -91,7 +92,7 @@ parser.add_argument(
 parser.add_argument(
     "--dataset_type",
     type=str,
-    choices=["rag_factoid", "sharegpt"],
+    choices=["rag_factoid", "sharegpt", "custom"],
     default="sharegpt",
     help="selects the correct dataset type for sampling. Must be one of rag_factoid or sharegpt",
 )
@@ -176,8 +177,26 @@ max_new_tokens = args.max_new_tokens
 model_variant = args.model_variant
 DATASET_PATH = args.dataset_path
 save_validation_info_outputs = args.save_validation_info_outputs
+tokenizer = AutoTokenizer.from_pretrained(model_variant)
 
-if args.dataset_type == "rag_factoid":
+if args.dataset_type == "custom":
+    if local_rank == 0:
+        dprint(
+            "Using custom prompts from user, programs parameter will be ignored as it will be determined by user prompt"
+        )
+    result = []
+    with open(DATASET_PATH, "r") as file:
+        for line in file:
+            res_line = line.strip()
+            result.append((res_line, get_pad_size(len(tokenizer.encode(res_line)))))
+    custom_shape = (len(result), max([_[1] for _ in result]))
+
+    def __custom_line_sampler(*args, **kwargs):
+        return result
+
+    sampler = __custom_line_sampler
+    allow_truncation = False
+elif args.dataset_type == "rag_factoid":
     sampler = sample_rag_factoid_requests
     allow_truncation = False
 elif args.dataset_type == "sharegpt":
@@ -342,8 +361,6 @@ if not args.skip_validation:
         )
     validation_model.eval()
 
-tokenizer = AutoTokenizer.from_pretrained(model_variant)
-
 # warmup with any input so compiler produces criteria json
 input_ids, extra_kwargs = __prepare_inputs(2, max_tkv, tokenizer)
 extra_kwargs["attn_name"] = ATTN_NAME
@@ -413,28 +430,37 @@ for v in program_map.values():
 
 # select prompts that fit the batch size criteria
 valid_prompts = []
-for program_id, min_batch_size, min_prompt_length in programs:
-    found_valid_prompt = False
-    valid_map_keys = [
-        k for k in program_map.keys() if k[0] == program_criteria_list[program_id]
-    ]
-
-    if len(valid_map_keys) > 0:
-        for valid_prompt_shape in program_map.get(valid_map_keys[0], []):
-            # make sure the criteria for min batch and min prompt is satisfied
-            if (
-                valid_prompt_shape[0] >= min_batch_size
-                and valid_prompt_shape[1] >= min_prompt_length
-            ):
-                valid_prompts.append((program_id, valid_prompt_shape))
-                found_valid_prompt = True
+if custom_shape:
+    for program_criteria_seq, valid_prompt_shapes in program_map.items():
+        for valid_prompt_shape in valid_prompt_shapes:
+            if valid_prompt_shape == custom_shape:
+                valid_prompts = [(program_criteria_seq[0].program_id, custom_shape)]
                 break
+        if len(valid_prompts) > 0:
+            break
+else:
+    for program_id, min_batch_size, min_prompt_length in programs:
+        found_valid_prompt = False
+        valid_map_keys = [
+            k for k in program_map.keys() if k[0] == program_criteria_list[program_id]
+        ]
 
-    if not found_valid_prompt:
-        if local_rank == 0:
-            dprint(
-                f"no valid prompt shape was found which would result in program {program_id} that satisfied min_batch={min_batch_size} and min_prompt_length={min_prompt_length}"
-            )
+        if len(valid_map_keys) > 0:
+            for valid_prompt_shape in program_map.get(valid_map_keys[0], []):
+                # make sure the criteria for min batch and min prompt is satisfied
+                if (
+                    valid_prompt_shape[0] >= min_batch_size
+                    and valid_prompt_shape[1] >= min_prompt_length
+                ):
+                    valid_prompts.append((program_id, valid_prompt_shape))
+                    found_valid_prompt = True
+                    break
+
+        if not found_valid_prompt:
+            if local_rank == 0:
+                dprint(
+                    f"no valid prompt shape was found which would result in program {program_id} that satisfied min_batch={min_batch_size} and min_prompt_length={min_prompt_length}"
+                )
 
 
 # metric calculator based on the cross-entropy and mean diff for each decode step
