@@ -270,6 +270,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
         prompt_list = [prompt_list[0]] * (batch_size - len(prompt_list)) + prompt_list
 
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
+    extra_kwargs["mask"] = extra_kwargs["mask"].to(torch.float16)
     return input_ids, extra_kwargs
 
 
@@ -362,7 +363,13 @@ if not args.skip_validation:
     validation_model.eval()
 
 # warmup with any input so compiler produces criteria json
-input_ids, extra_kwargs = __prepare_inputs(2, max_tkv, tokenizer)
+prompt_list = [torch.arange(0, 64, dtype=torch.int64)]
+# matching vllm warmup to pad to 2 on fp8, and no pad for fp16
+if is_fp8:
+    prompt_list = prompt_list * 2
+input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=64)
+if not is_fp8:
+    extra_kwargs["mask"] = extra_kwargs["mask"].to(torch.float16)
 extra_kwargs["attn_name"] = ATTN_NAME
 if (
     "granite-3.3-8b-instruct" in model_variant
