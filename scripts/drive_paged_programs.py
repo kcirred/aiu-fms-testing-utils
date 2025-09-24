@@ -398,7 +398,7 @@ if USE_DISTRIBUTED:
 
 @dataclass
 class ProgramInfo:
-    program_id: int
+    program_id: str
     batch_size_limit: int
     batch_size_limit_type: str
     prompt_length_limit: int
@@ -445,7 +445,7 @@ with open(args.program_criteria_json_path, "r") as f:
                 ProgramInfo(int(enforce_prompt_split[0]), 0, ">=", 0, ">=")
             )  # this will always satisfy
         else:
-            program_id = int(enforce_prompt_split[0])
+            program_id = enforce_prompt_split[0]
             enforce_batch_size, enforce_prompt_length = (
                 _ for _ in enforce_prompt_split[1].split(",")
             )
@@ -504,7 +504,6 @@ else:
         prompt_length_limit = program_info.prompt_length_limit
         prompt_length_limit_type = program_info.prompt_length_limit_type
 
-        found_valid_prompt = False
         filtered_program_map = program_map
         if program_id.isnumeric():
             filtered_program_map = {
@@ -525,6 +524,7 @@ else:
             for valid_prompt_shape in valid_prompt_shapes:
                 # make sure the criteria for batch limit and prompt limit is satisfied
                 # eval is safe here because we have limited what type and limit can be before
+
                 batch_check = eval(
                     f"valid_prompt_shape[0] {batch_size_limit_type} {batch_size_limit}"
                 )
@@ -532,15 +532,13 @@ else:
                     f"valid_prompt_shape[1] {prompt_length_limit_type} {prompt_length_limit}"
                 )
                 if batch_check and prompt_check:
-                    valid_prompts.append((program_id, valid_prompt_shape))
+                    valid_prompts.append((program_seq_key[0], valid_prompt_shape))
                     used_keys.add(program_seq_key[0])
-                    found_valid_prompt = True
                     break
-        if not found_valid_prompt:
-            if local_rank == 0:
-                dprint(
-                    f"no valid prompt shape was found which would result in program {program_id} that satisfied batch{batch_size_limit_type}{batch_size_limit} and prompt_length{prompt_length_limit_type}{prompt_length_limit}"
-                )
+        if len(used_keys) == 0 and local_rank == 0:
+            dprint(
+                f"no valid prompt shape was found which would result in program {program_id} that satisfied batch{batch_size_limit_type}{batch_size_limit} and prompt_length{prompt_length_limit_type}{prompt_length_limit}"
+            )
 
 
 # metric calculator based on the cross-entropy and mean diff for each decode step
