@@ -334,6 +334,9 @@ def generate(
             # mask is no longer used here
             kwargs["mask"] = None
             kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
+            kwargs["position_ids"] = kwargs["position_ids"].clone(
+                memory_format=torch.contiguous_format
+            )
 
             # we no longer have a global pos_i, each sequence has its own pos_i
             slot_mapping = []
@@ -366,6 +369,7 @@ def generate(
             kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
 
             # batch
+            input_ids = input_ids.clone(memory_format=torch.contiguous_format)
             torch._dynamo.mark_dynamic(input_ids, 0)
             torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
             torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
