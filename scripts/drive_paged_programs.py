@@ -440,12 +440,12 @@ with open(args.program_criteria_json_path, "r") as f:
 
     for program_str in args.programs:
         enforce_prompt_split = program_str.split(":")
+        program_id = enforce_prompt_split[0]
         if len(enforce_prompt_split) == 1:
             programs.append(
-                ProgramInfo(int(enforce_prompt_split[0]), 0, ">=", 0, ">=")
+                ProgramInfo(program_id, 0, ">=", 0, ">=")
             )  # this will always satisfy
         else:
-            program_id = enforce_prompt_split[0]
             enforce_batch_size, enforce_prompt_length = (
                 _ for _ in enforce_prompt_split[1].split(",")
             )
@@ -470,7 +470,8 @@ with open(args.program_criteria_json_path, "r") as f:
 
     if len(programs) == 0:
         programs = [
-            ProgramInfo(p.program_id, 0, ">=", 0, ">=") for p in program_criteria_list
+            ProgramInfo(str(p.program_id), 0, ">=", 0, ">=")
+            for p in program_criteria_list
         ]
 
 
