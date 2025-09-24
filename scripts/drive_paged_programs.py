@@ -178,6 +178,7 @@ model_variant = args.model_variant
 DATASET_PATH = args.dataset_path
 save_validation_info_outputs = args.save_validation_info_outputs
 tokenizer = AutoTokenizer.from_pretrained(model_variant)
+custom_shape = None
 
 if args.dataset_type == "custom":
     if local_rank == 0:
@@ -363,13 +364,14 @@ if not args.skip_validation:
     validation_model.eval()
 
 # warmup with any input so compiler produces criteria json
+# TODO: Swap this with __prepare_inputs once fix for shape_id is available
+# input_ids, extra_kwargs = __prepare_inputs(2, max_tkv, tokenizer)
 prompt_list = [torch.arange(0, 64, dtype=torch.int64)]
 # matching vllm warmup to pad to 2 on fp8, and no pad for fp16
 if is_fp8:
     prompt_list = prompt_list * 2
 input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=64)
-if not is_fp8:
-    extra_kwargs["mask"] = extra_kwargs["mask"].to(torch.float16)
+extra_kwargs["mask"] = extra_kwargs["mask"].to(torch.float16)
 extra_kwargs["attn_name"] = ATTN_NAME
 if (
     "granite-3.3-8b-instruct" in model_variant
