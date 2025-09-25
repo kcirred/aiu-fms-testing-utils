@@ -86,6 +86,11 @@ def generate(
     if extra_kwargs is not None:
         kwargs.update(extra_kwargs)
 
+    # if we didn't specify last_n_tokens and only_last_token is set to True, set last_n_tokens to 1, otherwise use default
+    # we do this since the output shape of only_last_token is different and therefore would change the logic in generate
+    if "last_n_tokens" not in kwargs and kwargs.get("only_last_token", False):
+        kwargs["last_n_tokens"] = 1
+
     is_fp8 = "fp8" in kwargs["attn_name"]
     if isinstance(input_ids, torch.Tensor):
         if len(input_ids.shape) == 1:
