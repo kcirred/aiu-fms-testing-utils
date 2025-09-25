@@ -421,8 +421,11 @@ def __sample_requests(
                     prompt_token_ids = tokenizer.encode(
                         prompt, add_special_tokens=False
                     )
+                    # If we don't set clean_up_tokenization_spaces=False, encoding then decoding text might result in different lengths which would break expected results from the sampler
                     truncated_prompt = tokenizer.decode(
-                        prompt_token_ids[:truncate_to_size], skip_special_tokens=True
+                        prompt_token_ids[:truncate_to_size],
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=False,
                     )
                     enforced_dataset.append((truncated_prompt, truncate_to_size))
                     enforce_sizes_with_truncation.remove(truncation_found)

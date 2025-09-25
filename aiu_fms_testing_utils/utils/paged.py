@@ -209,15 +209,19 @@ def generate(
     )
 
     # left_padded_prompt_mask - empty_slots + context_lengths
-    current_tkv_mask = torch.fill(context_lengths, torch.max(context_lengths))
+    current_tkv_mask = torch.fill(context_lengths, input_ids.shape[1])
 
     slot_mapping = []
     block_table = []
     # each sequence has the possibility of a different tkv, so loop over that
     for seq_tkv in context_lengths:
         block_table_i = [block_numbers.pop(0) for _ in range(seq_tkv // BLOCK_SIZE)]
+        # pad block_table_i for the real padded length
+        block_table_i = [block_table_i[0]] * (
+            (input_ids.shape[1] - seq_tkv) // BLOCK_SIZE
+        ) + block_table_i
         slot_mapping_i = []
-        for pos_i in range(seq_tkv):
+        for pos_i in range(input_ids.shape[1] - seq_tkv, input_ids.shape[1]):
             # we may have already popped a block, so index to the proper block
             block_number = block_table_i[pos_i // BLOCK_SIZE]
 
@@ -333,6 +337,9 @@ def generate(
             # mask is no longer used here
             kwargs["mask"] = None
             kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
+            kwargs["position_ids"] = kwargs["position_ids"].clone(
+                memory_format=torch.contiguous_format
+            )
             kwargs["last_n_tokens"] = 1
 
             # we no longer have a global pos_i, each sequence has its own pos_i
@@ -366,6 +373,7 @@ def generate(
             kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
 
             # batch
+            input_ids = input_ids.clone(memory_format=torch.contiguous_format)
             torch._dynamo.mark_dynamic(input_ids, 0)
             torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
             torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
