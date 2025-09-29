@@ -240,7 +240,7 @@ def execute_dpp(
         f"--program_criteria_json_path={os.environ['DT_PROG_CRITERIA_FILEPATH']}"
     ]
 
-    return execute_script(command_list)
+    return execute_script(command_list, isolated_env)
 
 
 dpp_possibilities = []
