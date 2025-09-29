@@ -37,17 +37,21 @@ common_params = list(
     )
 )
 
-current_env = os.environ.copy()
+
+@pytest.fixture
+def isolated_env(monkeypatch):
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    yield os.environ
 
 
-def execute_script(execute_cmd):
+def execute_script(execute_cmd, isolated_env):
     with Popen(
         execute_cmd,
         stdin=PIPE,
         stdout=PIPE,
         stderr=PIPE,
         universal_newlines=True,
-        env=current_env,
+        env=isolated_env,
     ) as p:
         output, error = p.communicate()
         if p.returncode == 0:
@@ -57,21 +61,27 @@ def execute_script(execute_cmd):
 
 
 def execute_inference(
-    model_path, batch_size, seq_length, max_new_tokens, attn_type, allow_symbolic_shapes
+    model_path,
+    batch_size,
+    seq_length,
+    max_new_tokens,
+    attn_type,
+    allow_symbolic_shapes,
+    isolated_env,
 ):
     extra_args = []
     if attn_type == "paged":
         # paged needs symbolic shapes
         extra_args.append("--attention_type=paged")
         # using these options temporarily
-        current_env.setdefault("VLLM_DT_MAX_BATCH_TKV_LIMIT", "16384")
-        current_env.setdefault("VLLM_DT_MAX_BATCH_SIZE", "4")
-        current_env.setdefault("VLLM_DT_MAX_CONTEXT_LEN", "4096")
+        isolated_env.setdefault("VLLM_DT_MAX_BATCH_TKV_LIMIT", "16384")
+        isolated_env.setdefault("VLLM_DT_MAX_BATCH_SIZE", "4")
+        isolated_env.setdefault("VLLM_DT_MAX_CONTEXT_LEN", "4096")
     else:
         # added in case symbolic shapes used with sdpa
-        current_env.setdefault("_PROMPT_LEN", "64")
-        current_env.setdefault("_MAX_DECODE_TOKENS", "8")
-        current_env.setdefault("_MAX_CONTEXT_LEN", "71")
+        isolated_env.setdefault("_PROMPT_LEN", "64")
+        isolated_env.setdefault("_MAX_DECODE_TOKENS", "8")
+        isolated_env.setdefault("_MAX_CONTEXT_LEN", "71")
 
     if allow_symbolic_shapes is not None and allow_symbolic_shapes:
         extra_args.append("--compile_dynamic_sendnn")
@@ -92,7 +102,7 @@ def execute_inference(
         "--device_type=aiu",
         "--default_dtype=fp16",
     ]
-    return execute_script(execute_cmd + extra_args)
+    return execute_script(execute_cmd + extra_args, isolated_env)
 
 
 common_asserts = [
@@ -132,6 +142,7 @@ def test_inference_script(
     attn_type,
     asserts,
     allow_symbolic_shapes,
+    isolated_env,
 ):
     # force symbolic shapes if paged
     if "paged" in attn_type:
@@ -143,6 +154,7 @@ def test_inference_script(
         max_new_tokens,
         attn_type,
         allow_symbolic_shapes,
+        isolated_env,
     )
 
     for common_assert in asserts:
@@ -163,15 +175,16 @@ def execute_dpp(
     skip_validation,
     enforce_homogeneous_prompt_programs,
     shared_tmp_path,
+    isolated_env,
 ):
-    current_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "1024"
-    current_env["VLLM_DT_MAX_CONTEXT_LEN"] = "512"
-    current_env["VLLM_DT_MAX_BATCH_SIZE"] = "2"
+    isolated_env["VLLM_DT_MAX_BATCH_TKV_LIMIT"] = "1024"
+    isolated_env["VLLM_DT_MAX_CONTEXT_LEN"] = "512"
+    isolated_env["VLLM_DT_MAX_BATCH_SIZE"] = "2"
     Path(os.path.join(shared_tmp_path, "sendnn_cache")).mkdir(exist_ok=True)
     os.environ.setdefault(
         "TORCH_SENDNN_CACHE_DIR", os.path.join(shared_tmp_path, "sendnn_cache")
     )
-    current_env["TORCH_SENDNN_CACHE_ENABLE"] = "1"
+    isolated_env["TORCH_SENDNN_CACHE_ENABLE"] = "1"
 
     command_list = [
         "python3",
@@ -258,6 +271,7 @@ def test_dpp_script(
     skip_validation,
     enforce_homogeneous_prompt_programs,
     shared_tmp_path,
+    isolated_env,
 ):
     os.environ.setdefault(
         "DT_PROG_CRITERIA_FILEPATH",
@@ -273,6 +287,7 @@ def test_dpp_script(
         skip_validation,
         enforce_homogeneous_prompt_programs,
         shared_tmp_path,
+        isolated_env,
     )
     print(result_text)
     with open(os.environ["DT_PROG_CRITERIA_FILEPATH"], "r") as f:
