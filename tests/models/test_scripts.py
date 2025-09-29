@@ -11,7 +11,9 @@ FMS_DIR = Path(__file__).parent
 AIU_FMS_DIR = os.path.join(FMS_DIR, "../../../aiu-fms-testing-utils/")
 INFERENCE_FILE_PATH = os.path.join(AIU_FMS_DIR, "scripts", "inference.py")
 DPP_FILE_PATH = os.path.join(AIU_FMS_DIR, "scripts", "drive_paged_programs.py")
-SHARED_DIR = os.environ.get("FMS_TESTING_SHARED_MODEL_DIRECTORY", "/mnt/home/models")
+SHARED_DIR = os.environ.get(
+    "FMS_TESTING_SHARED_MODEL_DIRECTORY", "/home/senuser/models"
+)
 common_model_paths = os.environ.get("FMS_TESTING_COMMON_MODEL_PATHS", "")
 
 # pass custom model path list for eg: EXPORT FMS_TESTING_COMMON_MODEL_PATHS="/tmp/models/granite-3-8b-base,/tmp/models/granite-7b-base"
@@ -145,16 +147,6 @@ def test_inference_script(
 
     for common_assert in asserts:
         assert common_assert in result_text
-
-
-program_possibilities = [None, "*:0,==256", "?:2,>=256", "?:==2,<=256"]
-max_new_tokens = [8, 128]
-dataset_type = ["sharegpt", "custom"]
-test_type = ["metrics", "tokens"]
-skip_validation = [True, False]
-prioritize_large_batch_sizes = [True, False]
-enforce_homogeneous_prompt_programs = [True, False]
-attn_types = ["paged", "paged_fp8"]
 
 
 @pytest.fixture(scope="session")
