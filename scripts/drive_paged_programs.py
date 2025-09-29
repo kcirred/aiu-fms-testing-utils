@@ -632,7 +632,7 @@ for program_id, valid_prompt in valid_prompts:
                 input_ids,
                 max_new_tokens,
                 GoldenTokenHook(cpu_validation_info.get_info("tokens")),
-                only_last_token=False,
+                last_n_tokens=64,
                 timing=TIMING,
                 **extra_kwargs,
             )
@@ -676,7 +676,7 @@ for program_id, valid_prompt in valid_prompts:
                 input_ids,
                 max_new_tokens,
                 None,
-                only_last_token=False,
+                last_n_tokens=64,
                 timing=TIMING,
                 **extra_kwargs,
             )
@@ -718,7 +718,7 @@ for program_id, valid_prompt in valid_prompts:
             input_ids,
             max_new_tokens,
             None,
-            only_last_token=False,
+            last_n_tokens=64,
             timing=TIMING,
             **extra_kwargs,
         )
