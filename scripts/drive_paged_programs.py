@@ -40,6 +40,7 @@ from aiu_fms_testing_utils.utils.paged import (
     get_programs_prompts,
     KVCACHE_NUM_BLOCKS_HINT,
 )
+from aiu_fms_testing_utils.testing.utils import format_kwargs_to_string
 
 parser = argparse.ArgumentParser(
     description="Script which will drive paged programs for debugging"
@@ -195,6 +196,10 @@ if args.dataset_type == "custom":
     custom_shape = (len(result), max([_[1] for _ in result]))
 
     def __custom_line_sampler(*args, **kwargs):
+        return_key = kwargs.get("return_key", False)
+        sample_key = format_kwargs_to_string(**kwargs)
+        if return_key:
+            return result, sample_key
         return result
 
     sampler = __custom_line_sampler
@@ -245,7 +250,7 @@ max_tkv = int(os.environ["VLLM_DT_MAX_CONTEXT_LEN"])
 
 def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0):
     start = time.time()
-    prompts_and_sizes = sampler(
+    prompts_and_sizes, sample_key = sampler(
         DATASET_PATH,
         batch_size,
         tokenizer,
@@ -254,6 +259,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
         seed,
         enforce_sizes=enforce_sizes,
         truncation=allow_truncation,
+        return_key=True,
     )
     end = time.time()
     if local_rank == 0:
@@ -274,7 +280,7 @@ def __prepare_inputs(batch_size, seq_length, tokenizer, enforce_sizes=[], seed=0
 
     input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=seq_length)
     extra_kwargs["mask"] = extra_kwargs["mask"].to(torch.float16)
-    return input_ids, extra_kwargs
+    return input_ids, extra_kwargs, sample_key
 
 
 def __maybe_prepare_fp8_weights(model_in, is_fp8):
@@ -296,7 +302,9 @@ def __load_validation_info(
     tokenizer,
     seed,
     attn_type: str,
+    **kwargs,
 ):
+    sample_key = kwargs.get("sample_key", None)
     full_path = find_validation_info_path(
         args.validation_info_outputs_dir,
         model_variant,
@@ -307,6 +315,7 @@ def __load_validation_info(
         attn_type,
         version_allow_decrement=True,
         dtype=CPU_DTYPE,
+        sample_key=sample_key,
     )
     if full_path is not None:
         dprint(f"cpu validation info found for seed={seed} -- loading it")
@@ -367,13 +376,14 @@ if not args.skip_validation:
 
 # warmup with any input so compiler produces criteria json
 # TODO: Swap this with __prepare_inputs once fix for shape_id is available
-# input_ids, extra_kwargs = __prepare_inputs(2, max_tkv, tokenizer)
+# input_ids, extra_kwargs, sample_key = __prepare_inputs(2, max_tkv, tokenizer)
 prompt_list = [torch.arange(0, 64, dtype=torch.int64)]
 # matching vllm warmup to pad to 2 on fp8, and no pad for fp16
 if is_fp8:
     prompt_list = prompt_list * 2
 input_ids, extra_kwargs = pad_input_ids(prompt_list, min_pad_length=64)
 extra_kwargs["mask"] = extra_kwargs["mask"].to(torch.float16)
+
 extra_kwargs["attn_name"] = ATTN_NAME
 if (
     "granite-3.3-8b-instruct" in model_variant
@@ -494,7 +504,7 @@ if custom_shape:
         for valid_prompt_shape in valid_prompt_shapes:
             if valid_prompt_shape == custom_shape:
                 enforce_sizes = [valid_prompt_shape[1]]
-                input_ids, extra_kwargs = __prepare_inputs(
+                input_ids, extra_kwargs, sample_key = __prepare_inputs(
                     valid_prompt_shape[0],
                     valid_prompt_shape[1],
                     tokenizer,
@@ -506,6 +516,7 @@ if custom_shape:
                         custom_shape,
                         input_ids,
                         extra_kwargs,
+                        sample_key,
                     )
                 ]
                 break
@@ -566,7 +577,7 @@ else:
                             )
                         )
                     try:
-                        input_ids, extra_kwargs = __prepare_inputs(
+                        input_ids, extra_kwargs, sample_key = __prepare_inputs(
                             valid_prompt_shape[0],
                             valid_prompt_shape[1],
                             tokenizer,
@@ -578,6 +589,7 @@ else:
                                 valid_prompt_shape,
                                 input_ids,
                                 extra_kwargs,
+                                sample_key,
                             )
                         )
                         used_keys.add(program_seq_key[0])
@@ -609,7 +621,7 @@ def __metric_calculator(r: torch.Tensor, t: torch.Tensor):
 
 failed_cases = []
 # for each program and valid prompt (batch size, sequence length)
-for program_id, valid_prompt, input_ids, extra_kwargs in valid_prompts:
+for program_id, valid_prompt, input_ids, extra_kwargs, sample_key in valid_prompts:
     extra_kwargs["attn_name"] = ATTN_NAME
     if (
         "granite-3.3-8b-instruct" in model_variant
@@ -634,6 +646,7 @@ for program_id, valid_prompt, input_ids, extra_kwargs in valid_prompts:
             tokenizer,
             seed=0,
             attn_type=ATTN_NAME,
+            sample_key=sample_key,
         )
         # if the cpu validation info is not yet computed, compute it
         if cpu_validation_info is None:
@@ -657,6 +670,7 @@ for program_id, valid_prompt, input_ids, extra_kwargs in valid_prompts:
                         0,
                         ATTN_NAME,
                         dtype=CPU_DTYPE,
+                        sample_key=sample_key,
                     )
                 )
 
