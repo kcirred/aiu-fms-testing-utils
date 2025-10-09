@@ -5,6 +5,9 @@ import torch
 from aiu_fms_testing_utils.utils.aiu_setup import dprint
 from aiu_fms_testing_utils._version import version_tuple
 import os
+from aiu_fms_testing_utils.testing.utils import format_kwargs_to_string
+
+import hashlib
 
 
 class LogitsExtractorHook(
@@ -125,13 +128,7 @@ class ValidationInfo:
 
 
 def get_default_validation_prefix(
-    model_id: str,
-    max_new_tokens: int,
-    batch_size: int,
-    seq_length: int,
-    dtype: str,
-    attn_type: str,
-    aftu_version: str,
+    **kwargs,
 ):
     """
     Args:
@@ -144,9 +141,17 @@ def get_default_validation_prefix(
         aftu_version (str): introduced in v0.3.0 to track changed in log
 
     Returns:
-        str: A prefix that will be prepended to the file name
+        str: A hashed prefix that will be prepended to the file name
     """
-    return f"{model_id.replace('/', '--')}_max-new-tokens-{max_new_tokens}_batch-size-{batch_size}_seq-length-{seq_length}_dtype-{dtype}_attn-type-{attn_type}.{aftu_version}"
+    aftu_version = kwargs.pop(
+        "aftu_version", ".".join([str(_) for _ in version_tuple[:3]])
+    )
+    kwargs_str = format_kwargs_to_string(**kwargs)
+
+    filename = f"{kwargs_str}"
+    hash_object = hashlib.sha256(filename.encode("utf-8"))
+    hex_digest = hash_object.hexdigest()
+    return f"{hex_digest}_{aftu_version}"
 
 
 def load_validation_information(
@@ -256,7 +261,7 @@ def extract_validation_information(
     post_iteration_hook,
     attn_algorithm=None,
     eos_token_id=None,
-    only_last_token=False,
+    last_n_tokens=0,
     timing="",
     **extra_kwargs,
 ):
@@ -270,10 +275,10 @@ def extract_validation_information(
         attention_specific_kwargs["contiguous_cache"] = True
         attention_specific_kwargs["max_seq_len"] = input_ids.shape[1] + max_new_tokens
 
-    # Add only_last_token optimization
+    # Add last_n_tokens optimization
     extra_generation_kwargs = {**extra_kwargs}
-    if only_last_token:
-        extra_generation_kwargs["only_last_token"] = only_last_token
+    if last_n_tokens != 0:
+        extra_generation_kwargs["last_n_tokens"] = last_n_tokens
     if attn_algorithm is not None:
         extra_generation_kwargs["attn_algorithm"] = attn_algorithm
 
@@ -416,16 +421,19 @@ def get_validation_info_path(
     aftu_version: Optional[Tuple[int, int, int]] = None,
     device_type: str = "cpu",
     dtype: str = "fp16",
+    **kwargs,
 ):
     if aftu_version is None:
         aftu_version = version_tuple
 
-    validation_file_name = f"{get_default_validation_prefix(model_variant, max_new_tokens, batch_size, seq_length, dtype, attn_type, '.'.join([str(_) for _ in aftu_version[:3]]))}.{device_type}_validation_info.{seed}.out"
+    sample_key = kwargs.get("sample_key", None)
+
+    validation_file_name = f"{get_default_validation_prefix(aftu_version='.'.join([str(_) for _ in aftu_version[:3]]), model_id=model_variant, max_new_tokens=max_new_tokens, batch_size=batch_size, seq_length=seq_length, dtype=dtype, attn_type=attn_type, sample_key=sample_key)}.{device_type}_validation_info.{seed}.out"
     full_path = os.path.join(validation_info_dir, validation_file_name)
     return full_path
 
 
-def __decrement_version(version: Tuple[int, int, int]):
+def __decrement_version(version: Tuple[int, int, int], max_minor=25, max_patch=25):
     """
     Function designed to prevent triple nested for loop while decrementing version
     """
@@ -433,9 +441,9 @@ def __decrement_version(version: Tuple[int, int, int]):
     if patch > 0:
         return (major, minor, patch - 1)
     elif minor > 0:
-        return (major, minor - 1, 0)
+        return (major, minor - 1, max_patch)
     elif major > 0:
-        return (major - 1, 0, 0)
+        return (major - 1, max_minor, max_patch)
     else:
         return None
 
@@ -452,10 +460,12 @@ def find_validation_info_path(
     version_allow_decrement: bool = False,
     device_type: str = "cpu",
     dtype: str = "fp16",
+    **kwargs,
 ):
     """
     Find the validation info path if it exists, otherwise return None
     """
+    sample_key = kwargs.get("sample_key", None)
 
     if aftu_version is None:
         loc_version_tuple = version_tuple[:3]
@@ -476,6 +486,7 @@ def find_validation_info_path(
             loc_version_tuple,
             device_type,
             dtype,
+            sample_key=sample_key,
         )
         # if the path is found, we are done searching and can return
         if os.path.exists(full_path):

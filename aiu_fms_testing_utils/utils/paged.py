@@ -86,6 +86,11 @@ def generate(
     if extra_kwargs is not None:
         kwargs.update(extra_kwargs)
 
+    # if we didn't specify last_n_tokens and only_last_token is set to True, set last_n_tokens to 1, otherwise use default
+    # we do this since the output shape of only_last_token is different and therefore would change the logic in generate
+    if "last_n_tokens" not in kwargs and kwargs.get("only_last_token", False):
+        kwargs["last_n_tokens"] = 1
+
     is_fp8 = "fp8" in kwargs["attn_name"]
     if isinstance(input_ids, torch.Tensor):
         if len(input_ids.shape) == 1:
@@ -209,15 +214,19 @@ def generate(
     )
 
     # left_padded_prompt_mask - empty_slots + context_lengths
-    current_tkv_mask = torch.fill(context_lengths, torch.max(context_lengths))
+    current_tkv_mask = torch.fill(context_lengths, input_ids.shape[1])
 
     slot_mapping = []
     block_table = []
     # each sequence has the possibility of a different tkv, so loop over that
     for seq_tkv in context_lengths:
         block_table_i = [block_numbers.pop(0) for _ in range(seq_tkv // BLOCK_SIZE)]
+        # pad block_table_i for the real padded length
+        block_table_i = [block_table_i[0]] * (
+            (input_ids.shape[1] - seq_tkv) // BLOCK_SIZE
+        ) + block_table_i
         slot_mapping_i = []
-        for pos_i in range(seq_tkv):
+        for pos_i in range(input_ids.shape[1] - seq_tkv, input_ids.shape[1]):
             # we may have already popped a block, so index to the proper block
             block_number = block_table_i[pos_i // BLOCK_SIZE]
 
@@ -229,7 +238,7 @@ def generate(
     kwargs["current_tkv_mask"] = None
     kwargs["left_padded_prompt_mask"] = None
     kwargs["use_cache"] = use_cache
-    only_last_token = kwargs.get("only_last_token", False)
+    last_n_tokens = kwargs.get("last_n_tokens", 0)
 
     prompt_length = input_ids.shape[1]
 
@@ -292,7 +301,7 @@ def generate(
                         t1._scale = current_kv_scales[layer_idx][0][seq_i].reshape(-1)
                         t2._scale = current_kv_scales[layer_idx][1][seq_i].reshape(-1)
 
-                only_last_token = kwargs.get("only_last_token", False)
+                last_n_tokens = kwargs.get("last_n_tokens", 0)
                 output, current_kv_cache = model(
                     input_ids_i,
                     slot_mapping=slot_mapping_i,
@@ -300,13 +309,12 @@ def generate(
                     mask=mask_i,
                     past_key_value_states=current_kv_cache,
                     use_cache=kwargs["use_cache"],
-                    only_last_token=only_last_token,
+                    last_n_tokens=last_n_tokens,
                     attn_name=kwargs["attn_name"],
                 )
 
                 # only last token must be handled here to properly stack the tensors
-                if not only_last_token:
-                    output = output[:, -1, :]
+                output = output[:, -1, :]
 
                 # TODO: Figure out how to do this cleanly
                 if "fp8" in kwargs["attn_name"]:
@@ -334,6 +342,10 @@ def generate(
             # mask is no longer used here
             kwargs["mask"] = None
             kwargs["position_ids"] = kwargs["position_ids"][:, -1:] + 1
+            kwargs["position_ids"] = kwargs["position_ids"].clone(
+                memory_format=torch.contiguous_format
+            )
+            kwargs["last_n_tokens"] = 1
 
             # we no longer have a global pos_i, each sequence has its own pos_i
             slot_mapping = []
@@ -366,6 +378,7 @@ def generate(
             kwargs["slot_mapping"] = torch.tensor(slot_mapping, dtype=torch.int64)
 
             # batch
+            input_ids = input_ids.clone(memory_format=torch.contiguous_format)
             torch._dynamo.mark_dynamic(input_ids, 0)
             torch._dynamo.mark_dynamic(kwargs["block_table"], 0)
             torch._dynamo.mark_dynamic(kwargs["slot_mapping"], 0)
@@ -388,8 +401,7 @@ def generate(
             # typically this is done outside of prefill/decode logic, but since this logic already exists as part of the
             # conditional for prefill (since prefill does this within a loop for each batch size 1 prefill), we also provide
             # this same logic as part of the decode conditional
-            if not only_last_token:
-                logits = logits[:, -1, :]
+            logits = logits[:, -1, :]
 
             output = (logits, past_key_value_states)
 
